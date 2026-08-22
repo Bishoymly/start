@@ -1,45 +1,85 @@
-# @bishoymly/start
+# Start
 
-Create a focused, agent-ready Next.js workspace from the terminal or from a blueprint made at [bishoy.io/start](https://bishoy.io/start).
+Build an agent-ready Next.js workspace without spending the first hour reconciling tools, instructions, and verification scripts.
+
+Start turns one reviewed blueprint into a deterministic scaffold: strict TypeScript, Tailwind CSS v4, shadcn/ui source components, agent instructions, selected services, tests, CI, and a single `verify` command.
 
 ```bash
 pnpm dlx @bishoymly/start@latest
 ```
 
-With no blueprint, the CLI asks the same project, UI, service, and delivery questions as the web builder. Its first choice can open the web builder instead, or you can open it directly:
+[Build a blueprint in the web builder](https://bishoy.io/start) · [View curated recipes](https://bishoy.io/start/recipes) · [Open the npm package](https://www.npmjs.com/package/@bishoymly/start)
+
+## Two ways to start
+
+Run the guided terminal flow:
+
+```bash
+pnpm dlx @bishoymly/start@latest
+```
+
+Or review the stack visually, share it with a teammate, and copy the exact command:
 
 ```bash
 pnpm dlx @bishoymly/start@latest --web
 ```
 
-Commands copied from the web builder remain deterministic and non-interactive:
+Commands copied from the web builder are deterministic and non-interactive:
 
 ```bash
 pnpm dlx @bishoymly/start@latest my-app --blueprint v2.<token>
 ```
 
-Start refuses to overwrite non-empty directories and rejects absolute or parent-traversing paths.
+## What the generated workspace includes
 
-Every generated workspace includes strict TypeScript, Tailwind CSS v4, shadcn/ui source components, an agent instruction hierarchy, a high-quality README, `.env.example`, and Git setup. A pinned design reference is optional. The UI contract carries a normalized shadcn preset plus a minimal, top-navigation, or sidebar starting surface. Preset commands pasted into either builder are decoded as data and are never executed.
+Start writes only the integrations selected in the blueprint. A typical project begins with:
 
-The blueprint can independently add Biome or ESLint with Prettier, CI, Vitest, Playwright, OpenTelemetry, Sentry, Better Auth, Drizzle or Prisma, storage, and AI providers. Review also provides a tailored, copyable kickoff prompt for the selected coding agent after the deterministic scaffold command runs.
+```text
+my-app/
+├── app/                         Next.js App Router surface
+├── components/ui/               shadcn/ui source components
+├── .agents/commands/            implement, verify, review, ship-check
+├── .github/workflows/verify.yml optional CI contract
+├── AGENTS.md                    shared agent workflow and safety rules
+├── APP_BLUEPRINT.md             portable stack and delivery contract
+├── DESIGN.md                    optional pinned design reference
+├── .env.example                 selected service variables only
+├── README.md                    setup and architecture notes
+└── package.json                 one portable verify command
+```
 
-Only selected integrations are written or installed. `--skip-install` still produces the complete workspace contract without installing dependencies.
-When Playwright is selected and installation is enabled, the CLI also installs the pinned Chromium browser so the generated `verify` command is ready to run.
+The blueprint can add Biome or ESLint with Prettier, Vitest, Playwright, OpenTelemetry, Sentry, Better Auth, Drizzle or Prisma, storage, AI providers, and GitHub or GitLab CI. It also produces a tailored kickoff prompt for Codex, Claude Code, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, or Grok Build.
 
-Blueprint v1 is intentionally unsupported in v0.4. Rebuild older configurations at [bishoy.io/start](https://bishoy.io/start).
+## Why Start
 
-## Links
+| Tool | Best at | Start adds |
+| --- | --- | --- |
+| `create-next-app` | A fast official Next.js baseline | Agent instructions, reviewed service choices, delivery workflows, and a portable blueprint |
+| T3 / opinionated stacks | A proven fixed stack | Independent choices for auth, data, storage, AI, observability, testing, and CI |
+| Template repositories | Reusing one known architecture | A deterministic scaffold generated from the exact choices your team reviewed |
 
-- [Web builder](https://bishoy.io/start)
-- [npm package](https://www.npmjs.com/package/@bishoymly/start)
-- [Issues](https://github.com/bishoymly/start/issues)
+Start is deliberately not a package installer disguised as architecture. The blueprint records why the workspace exists, what is selected, what is not selected, and how both humans and agents verify changes.
+
+## Safety and reproducibility
+
+- Refuses to overwrite non-empty directories.
+- Rejects absolute paths and parent traversal.
+- Decodes imported shadcn preset commands as data; it never executes pasted commands.
+- Writes and installs only selected integrations.
+- Supports `--skip-install` while still producing the complete workspace contract.
+- Installs the pinned Chromium browser when Playwright is selected so `verify` is ready to run.
+
+Blueprint v1 is intentionally unsupported in v0.4. Rebuild older configurations in the [web builder](https://bishoy.io/start).
 
 ## Development
+
+Start requires Node.js 20 or newer.
 
 ```bash
 npm install
 npm test
 ```
 
-Start is released under the [MIT License](./LICENSE).
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Product direction is tracked in [ROADMAP.md](./ROADMAP.md), and release changes in [CHANGELOG.md](./CHANGELOG.md).
+
+Start is released under the [MIT License](./LICENSE). Security reports should follow [SECURITY.md](./SECURITY.md).

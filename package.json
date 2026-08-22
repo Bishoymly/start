@@ -2,6 +2,17 @@
   "name": "@bishoymly/start",
   "version": "0.4.0",
   "description": "Create an agent-ready Next.js workspace from the terminal or a portable web blueprint.",
+  "keywords": [
+    "nextjs",
+    "scaffold",
+    "starter",
+    "ai-agent",
+    "codex",
+    "claude-code",
+    "shadcn-ui",
+    "typescript"
+  ],
+  "author": "Bishoy Youssef (https://bishoy.io)",
   "type": "module",
   "bin": {
     "start": "dist/cli.js"
@@ -47,10 +58,11 @@
     "type": "git",
     "url": "git+https://github.com/bishoymly/start.git"
   },
-  "homepage": "https://github.com/bishoymly/start#readme",
+  "homepage": "https://bishoy.io/start",
   "bugs": {
     "url": "https://github.com/bishoymly/start/issues"
   },
+  "funding": "https://github.com/sponsors/bishoymly",
   "publishConfig": {
     "access": "public"
   }

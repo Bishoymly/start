@@ -1,0 +1,36 @@
+name: Product feedback
+description: Propose a workflow, recipe, integration, or usability improvement.
+title: "[Feedback]: "
+labels: [feedback]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to accomplish?
+      description: Describe the workflow and where your current setup breaks down.
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What do you do today?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What would a good outcome look like?
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Most relevant surface
+      options:
+        - Terminal builder
+        - Web builder
+        - Generated workspace
+        - Tested recipes
+        - Documentation
+    validations:
+      required: true
