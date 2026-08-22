@@ -1,0 +1,57 @@
+{
+  "name": "@bishoymly/start",
+  "version": "0.4.0",
+  "description": "Create an agent-ready Next.js workspace from the terminal or a portable web blueprint.",
+  "type": "module",
+  "bin": {
+    "start": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./core": "./dist/core.js",
+    "./design": "./dist/design.js",
+    "./interactive": "./dist/interactive.js",
+    "./render": "./dist/render.js"
+  },
+  "files": [
+    "dist/cli.js",
+    "dist/core.js",
+    "dist/core.d.ts",
+    "dist/design.js",
+    "dist/design.d.ts",
+    "dist/index.js",
+    "dist/index.d.ts",
+    "dist/interactive.js",
+    "dist/interactive.d.ts",
+    "dist/render.js",
+    "dist/render.d.ts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/*.test.js",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bishoymly/start.git"
+  },
+  "homepage": "https://github.com/bishoymly/start#readme",
+  "bugs": {
+    "url": "https://github.com/bishoymly/start/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
