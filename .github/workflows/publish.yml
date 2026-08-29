@@ -45,5 +45,11 @@ jobs:
       - name: Test the release artifact
         run: npm test
 
+      - name: Enable npm trusted publishing
+        run: |
+          sed -i '/_authToken/d' "${NPM_CONFIG_USERCONFIG:?missing npm user config}"
+          test -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}"
+          test -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}"
+
       - name: Publish
         run: npm publish
