@@ -9,6 +9,7 @@ import {
   buildExecutionPlan,
   decodeV3Blueprint,
   isValidTargetDirectory,
+  resolveV3Config,
   type ExecutionPlanV3,
   type ExecutionPlanStep,
   type StarterConfigV3,
@@ -19,6 +20,7 @@ import {
   renderReadinessReport,
   renderStartOwnedFiles,
 } from "./render.js";
+import { collectInteractiveWizardState, TerminalPrompter } from "./interactive.js";
 
 const webBuilderUrl = "https://bishoy.io/start";
 
@@ -241,14 +243,28 @@ async function main(): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return printHelp();
   if (args.includes("--web")) return openWebBuilder();
   const options = parseArguments(args);
-  if (!options.blueprint) fail(`Interactive setup is not available in this release. Use --blueprint v3.<token> or open ${webBuilderUrl}.`);
   let config: StarterConfigV3;
-  try { config = decodeV3Blueprint(options.blueprint); } catch (error) { fail(error instanceof Error ? error.message : "Invalid v3 blueprint."); }
+  let planAlreadyPrinted = false;
+  if (options.blueprint) {
+    try { config = decodeV3Blueprint(options.blueprint); } catch (error) { fail(error instanceof Error ? error.message : "Invalid v3 blueprint."); }
+  } else {
+    if (!stdin.isTTY || !stdout.isTTY) fail(`Interactive setup requires a terminal. Use --blueprint v3.<token> or open ${webBuilderUrl}.`);
+    const prompter = new TerminalPrompter();
+    try {
+      config = resolveV3Config(await collectInteractiveWizardState(prompter, options.target));
+      const review = buildExecutionPlan(config);
+      console.log(`\n${renderPlanMarkdown(review)}`);
+      planAlreadyPrinted = true;
+      if (options.planOnly || !(await prompter.confirm("executePlan", "Execute this plan now?", true))) return;
+    } finally {
+      prompter.close();
+    }
+  }
   const targetDirectory = options.target ?? config.targetDirectory;
   const target = checkTarget(realpathSync(process.cwd()), targetDirectory);
   config = { ...config, targetDirectory };
   const plan = buildExecutionPlan(config);
-  console.log(renderPlanMarkdown(plan));
+  if (!planAlreadyPrinted) console.log(renderPlanMarkdown(plan));
   if (options.planOnly) return;
   const outcome = await execute(config, plan, target, options);
   console.log(`\nReadiness report written to ${resolve(target, "START_READINESS.md")}.`);
