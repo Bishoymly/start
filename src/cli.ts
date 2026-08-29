@@ -220,6 +220,13 @@ async function applyQuality(target: string, step: ExecutionPlanStep, files: Reco
   outcome.executed.push(step.id);
 }
 
+function installSkills(plan: ExecutionPlanV3, target: string): void {
+  for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`);
+  if (process.env.START_TEST_SKIP_EXECUTION !== "1" && pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
+    fail("The official Skills CLI completed without producing every expected project-local skill file.");
+  }
+}
+
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
   const outcome: Outcome = { executed: [], skipped: [], conflicts: [] };
   const interactive = Boolean(stdin.isTTY && stdout.isTTY && !options.blueprint);
@@ -268,8 +275,8 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
       else if (state === "different") {
         outcome.conflicts.push(step.id);
         if (await conflictDecision(step, options.overwrite, interactive) === "preserve") outcome.skipped.push(step.id);
-        else { for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`); outcome.executed.push(step.id); }
-      } else { for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`); outcome.executed.push(step.id); }
+        else { installSkills(plan, target); outcome.executed.push(step.id); }
+      } else { installSkills(plan, target); outcome.executed.push(step.id); }
     }
   }
 
