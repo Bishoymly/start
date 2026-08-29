@@ -6,6 +6,8 @@ Start uses the official [shadcn CLI](https://ui.shadcn.com/docs/cli) to create t
 
 [Web builder](https://bishoy.io/start) · [npm](https://www.npmjs.com/package/@bishoymly/start) · [issues](https://github.com/Bishoymly/start/issues)
 
+![A 10-second terminal demo of the Start CLI](./docs/assets/start-cli-demo.gif)
+
 ## Quick start
 
 Start the interactive CLI:
