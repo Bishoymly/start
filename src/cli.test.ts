@@ -33,6 +33,13 @@ test("CLI help documents v3, plan-only, overwrite, and web modes", () => {
   assert.doesNotMatch(result.stdout, /target-folder/);
 });
 
+test("published files include every CLI runtime helper", () => {
+  const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as { files: string[] };
+  assert.equal(pkg.files.includes("dist/bootstrap.js"), true);
+  assert.equal(pkg.files.includes("dist/bootstrap.d.ts"), true);
+  assert.equal(existsSync(join(process.cwd(), "dist", "bootstrap.js")), true);
+});
+
 test("CLI plan-only prints the v3 ordered plan without creating a target", () => {
   const root = mkdtempSync(join(tmpdir(), "start-plan-"));
   const result = run(root, ["app", "--blueprint", tokenFor(), "--plan"]);
