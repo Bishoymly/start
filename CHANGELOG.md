@@ -2,6 +2,14 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.8] - 2026-08-29
+
+- Install every available shadcn UI component through the official CLI and keep its upstream component source out of application linting.
+- Add concise Karpathy-inspired agent rules, project-local skills guidance, shared agent commands, hooks, and operational documentation under `/docs`.
+- Pin the generated Node, pnpm, framework, test, and browser-tool versions; add `.nvmrc`, `packageManager`, engines, Husky, and lint-staged.
+- Make `.env.example` trackable, ignore browser artifacts in Git, and make generated GitHub Actions install the pinned pnpm release before verification.
+- Replace the project README with open-source contributor documentation and remove the obsolete launch pack.
+
 ## [0.6.7] - 2026-08-29
 
 - Resolve current Next.js, React, Vitest, and Playwright releases in fresh generated workspaces.
@@ -49,6 +57,7 @@ All notable changes to Start are documented here.
 - Added Playwright browser installation and a generated portable `verify` contract.
 
 [0.4.0]: https://github.com/bishoymly/start/releases/tag/v0.4.0
+[0.6.8]: https://github.com/bishoymly/start/releases/tag/v0.6.8
 [0.6.7]: https://github.com/bishoymly/start/releases/tag/v0.6.7
 [0.6.1]: https://github.com/bishoymly/start/releases/tag/v0.6.1
 [0.6.2]: https://github.com/bishoymly/start/releases/tag/v0.6.2

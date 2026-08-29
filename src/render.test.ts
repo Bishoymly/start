@@ -18,16 +18,28 @@ test("durable baseline preserves official UI ownership and has no service leakag
   const tooling = createStartToolingManifest(config);
 
   for (const path of forbiddenProductPaths) assert.equal(files[path], undefined, `${path} must remain official or requirement-owned`);
-  assert.equal(files["AGENTS.md"].includes("Await a PRD"), true);
-  assert.equal(files["START_READINESS.md"].includes("Status: pending"), true);
+  assert.equal(files["AGENTS.md"].includes("Think before coding"), true);
+  assert.equal(files["docs/START_READINESS.md"].includes("Status: pending"), true);
+  assert.equal(files["docs/DEVELOPMENT.md"].includes("Full local gate"), true);
+  assert.equal(files["docs/AGENT_WORKFLOWS.md"].includes(".agents/commands/implement.md"), true);
+  assert.equal(files["docs/HOOKS.md"].includes("Husky"), true);
+  assert.equal(files["README.md"].includes("Quick start"), true);
   assert.equal(files[".github/workflows/verify.yml"].includes(plan.verification.command), true);
   assert.equal(files["start-tooling.json"] !== undefined, true);
   assert.equal(files["tests/readiness.test.ts"].includes('from "vitest"'), true);
-  assert.equal(files["tests/readiness.test.ts"].includes("START_PLAN.md"), true);
+  assert.equal(files["tests/readiness.test.ts"].includes("docs/START_PLAN.md"), true);
   assert.equal(files["biome.json"].includes('"!!test-results"'), true);
   assert.equal(files["biome.json"].includes('"!!tsconfig.json"'), true);
+  assert.equal(files["biome.json"].includes('"components/ui/**"'), true);
   assert.equal(files["next.config.ts"].includes('allowedDevOrigins: ["127.0.0.1"]'), true);
+  assert.equal(files[".nvmrc"], "24.3.0\n");
+  assert.match(files[".github/workflows/verify.yml"], /pnpm\/action-setup@v4/);
+  assert.match(files[".github/workflows/verify.yml"], /node-version: 24\.3\.0/);
   assert.equal(tooling.dependencies?.["better-auth"], undefined);
+  assert.equal(tooling.dependencies?.next, "16.3.3");
+  assert.equal(tooling.packageManager, "pnpm@9.15.0");
+  assert.equal(tooling.engines?.node, ">=24.3.0 <25");
+  assert.equal(tooling.devDependencies?.husky, "9.1.7");
   assert.equal(tooling.dependencies?.ai, undefined);
   assert.equal(files["lib/db/schema.ts"], undefined);
   assert.equal(files["lib/auth.ts"], undefined);
@@ -65,7 +77,7 @@ test("agent entry points are limited to selected agents and retain the readiness
   state = setV3UserDecision(state, "additionalAgents", ["cursor"]).state;
   const files = renderAgentEntryPoints(resolveV3Config(state));
 
-  assert.equal(files["CLAUDE.md"].includes("Await a PRD"), true);
+  assert.equal(files["CLAUDE.md"].includes("docs/START_READINESS.md"), true);
   assert.equal(files[".cursor/rules/start.mdc"] !== undefined, true);
   assert.equal(files[".codex/instructions.md"], undefined);
   assert.equal(files[".agents/commands/verify.md"].includes("run verify"), true);

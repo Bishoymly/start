@@ -1,89 +1,62 @@
 # Start
 
-Start turns an empty folder into a verified, agent-ready Next.js repository in one reviewable run.
+Create a verified, agent-ready Next.js workspace from a portable, reviewable blueprint.
 
-It is a repository-readiness orchestrator, not a product template. Start calls the official shadcn CLI, preserves the chosen preset, and then adds only the durable tooling and infrastructure selected in a portable blueprint. It never invents a product page, navigation, database entities, dashboards, uploads, chats, or a first task.
+Start uses the official [shadcn CLI](https://ui.shadcn.com/docs/cli) to create the selected Next.js preset, adds every available shadcn UI component, then applies the quality, CI, documentation, agent-skill, and optional infrastructure choices in your blueprint. It creates repository foundations only—never product screens, domain models, or example data.
 
-```bash
-pnpm dlx @bishoymly/start@latest --web
-```
+[Web builder](https://bishoy.io/start) · [npm](https://www.npmjs.com/package/@bishoymly/start) · [issues](https://github.com/Bishoymly/start/issues)
 
-[Build a blueprint](https://bishoy.io/start) · [View the source](https://github.com/Bishoymly/start) · [Open the npm package](https://www.npmjs.com/package/@bishoymly/start)
+## Quick start
 
-## Review before writing
-
-Every v3 blueprint resolves to the same ordered execution plan in the web builder and CLI. Inspect it without changing a directory:
+Create a blueprint in the [web builder](https://bishoy.io/start), then inspect the exact plan before it writes files:
 
 ```bash
 pnpm dlx @bishoymly/start@latest my-app --blueprint v3.<token> --plan
 ```
 
-The plan distinguishes official commands from Start-owned configuration, and lists:
-
-- The selected shadcn preset and official initialization command.
-- Project-local skills and the selected coding agents.
-- Environment-variable contracts and capability requirements.
-- Quality, browser, CI, and production-build verification steps.
-- Compatibility warnings and any unavailable capabilities.
-
-Run the reviewed plan when you are ready:
+Run that reviewed plan:
 
 ```bash
 pnpm dlx @bishoymly/start@latest my-app --blueprint v3.<token>
 ```
 
-Fresh runs intentionally use current upstream tools. The generated readiness report records the versions actually resolved, the steps executed or skipped, warnings, and verification results.
+The generated project includes:
 
-## What Start owns
+- the chosen shadcn preset and all available shadcn components;
+- pinned Node, package-manager, framework, test, and browser-tool versions;
+- a `pnpm run verify` gate for format, lint, types, unit tests, browser tests, and production build;
+- CI that installs the matching pnpm version before running the same gate;
+- `AGENTS.md`, native agent entry points, local skills, shared agent commands, and `/docs` for the project contract; and
+- optional durable plumbing for data, auth, storage, AI, observability, and deployment—only when selected.
 
-Start orchestrates the official [shadcn CLI](https://ui.shadcn.com/docs/cli) rather than copying its templates. After the official template is in place, Start can configure a focused baseline:
+## How it stays safe
 
-- strict TypeScript; Biome or ESLint with Prettier
-- Vitest, Playwright with Chromium, and one `verify` command that includes the production build
-- CI that runs that exact verification command
-- `AGENTS.md`, native entry points for selected agents, and project-local design, `next-dev-loop`, and `agent-browser` skills
-- optional database/migration, authentication, storage, AI-provider, observability, and deployment plumbing
+Start rejects unsafe target paths and symbolic links. It records the exact blueprint and upstream command in `.start/` so a matching run can resume, while an unknown existing shadcn workspace stops for inspection. Start-owned configuration is replaced to match the selected blueprint; official source stays under shadcn ownership.
 
-Conditional capabilities create durable framework layers, dependencies, commands, and environment contracts only. Unselected capabilities do not leak files, dependencies, or variables into the result.
-
-## Convergent and safe
-
-Start checks a command or capability's postcondition on reruns:
-
-1. Missing state is applied.
-2. Matching state is skipped.
-3. Differing state becomes one coherent conflict decision.
-
-The official template is resumable only when `.start/v3-state.json` matches the exact v3 blueprint; an existing official-looking directory without that marker is a conflict, never a silent skip. Start always replaces its own configuration files to match the selected blueprint, without prompting. Path traversal and symbolic-link escapes are rejected for every output path and ancestor before writing.
-
-When the readiness report is clean, the generated repository is ready for product work—but the agent instructions deliberately say to await a PRD or requirements before implementing product behavior.
-
-## Development
-
-Start requires Node.js 20 or later.
+## Develop Start
 
 ```bash
 npm install
 npm test
 ```
 
-The CLI and planner tests cover the portable v3 contract. An opt-in release suite runs baseline, Vercel full-stack, and Azure alternative blueprints through the live CLI, install, browser verification, and generated baseline evidence:
+Run the live, networked generation test locally:
 
 ```bash
-START_LIVE_GOLDEN=1 npm test
+npm run test:full-run
 ```
 
-## Releasing
+## Contributing
 
-Releases use npm trusted publishing through GitHub Actions, so the workflow does not need an npm token or a manual one-time password.
+Read [CONTRIBUTING.md](./CONTRIBUTING.md), keep changes focused, and include tests for changed planning or generation behavior. Security issues belong in [SECURITY.md](./SECURITY.md), not public issue trackers.
 
-After the npm trusted publisher is configured for this repository, merge a version and changelog update to `main`, then either run **Publish package** from the Actions tab on `main` or create and push the matching tag:
+## Releases
+
+Releases use npm trusted publishing in GitHub Actions. Update the version and changelog, merge to `main`, then create and push the matching tag:
 
 ```bash
 git tag v<version>
 git push origin v<version>
 ```
 
-The workflow rejects manual runs outside `main` and tags that do not match the package version.
-
-Start is released under the [MIT License](./LICENSE).
+Released under the [MIT License](./LICENSE).

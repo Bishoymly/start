@@ -39,7 +39,7 @@ test("full generation succeeds from a fresh directory", { skip: !live && !fullRu
     const result = spawnSync(process.execPath, [cli.pathname, "app", "--blueprint", token], { cwd: root, encoding: "utf8", env: process.env, timeout: 10 * 60_000 });
     assert.equal(result.status, 0, `${name}: ${result.stderr}\n${result.stdout}`);
     const target = join(root, "app");
-    assert.equal(existsSync(join(target, "START_PLAN.md")), true);
-    assert.match(readFileSync(join(target, "START_READINESS.md"), "utf8"), /Status: passed/);
+    assert.equal(existsSync(join(target, "docs", "START_PLAN.md")), true);
+    assert.match(readFileSync(join(target, "docs", "START_READINESS.md"), "utf8"), /Status: passed/);
   }
 });

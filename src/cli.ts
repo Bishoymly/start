@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { dirname, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -201,8 +201,8 @@ function scopedStartFiles(files: Record<string, string>, id: string, agentFiles:
   const isCi = (path: string) => [".github/workflows/verify.yml", ".gitlab-ci.yml", "azure-pipelines.yml"].includes(path);
   const isCapability = (path: string) => path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/") || path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts" || path.startsWith("lib/storage/") || path.startsWith("lib/ai/") || path === "instrumentation.ts" || path.startsWith("sentry.");
   const belongsTo = (path: string) => {
-    if (id === "project-contracts") return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && !["tsconfig.json", "next.config.ts", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) && !path.startsWith("tests/");
-    if (id === "quality") return ["tsconfig.json", "next.config.ts", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) || path.startsWith("tests/");
+    if (id === "project-contracts") return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "docs/START_READINESS.md" && !["tsconfig.json", "next.config.ts", ".nvmrc", ".husky/pre-commit", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) && !path.startsWith("tests/");
+    if (id === "quality") return ["tsconfig.json", "next.config.ts", ".nvmrc", ".husky/pre-commit", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) || path.startsWith("tests/");
     if (id === "ci") return isCi(path);
     if (id === "database") return path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/");
     if (id === "authentication") return path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts";
@@ -224,7 +224,10 @@ function toolingState(target: string, manifest: StartToolingManifest): FileState
   const matched = entries.every(([section, name, version]) => (pkg[section] as Record<string, string> | undefined)?.[name] === version);
   const removable = manifest.removeDevDependencies ?? [];
   const removalsSatisfied = removable.every((name) => (pkg.devDependencies as Record<string, string> | undefined)?.[name] === undefined);
-  if (matched && removalsSatisfied) return "satisfied";
+  const metadataMatches = (!manifest.packageManager || pkg.packageManager === manifest.packageManager)
+    && (!manifest.engines || JSON.stringify(pkg.engines) === JSON.stringify(manifest.engines))
+    && (!manifest.lintStaged || JSON.stringify(pkg["lint-staged"]) === JSON.stringify(manifest.lintStaged));
+  if (matched && removalsSatisfied && metadataMatches) return "satisfied";
   if (entries.every(([section, name]) => (pkg[section] as Record<string, string> | undefined)?.[name] === undefined) && removalsSatisfied) return "absent";
   return "different";
 }
@@ -241,6 +244,9 @@ function applyToolingManifest(target: string, manifest: StartToolingManifest): v
   if (manifest.removeDevDependencies?.length && pkg.devDependencies && typeof pkg.devDependencies === "object") {
     for (const name of manifest.removeDevDependencies) delete (pkg.devDependencies as Record<string, string>)[name];
   }
+  if (manifest.packageManager) pkg.packageManager = manifest.packageManager;
+  if (manifest.engines) pkg.engines = manifest.engines;
+  if (manifest.lintStaged) pkg["lint-staged"] = manifest.lintStaged;
   writeFiles(target, { "package.json": `${JSON.stringify(pkg, null, 2)}\n` });
 }
 
@@ -258,12 +264,22 @@ function normalizeOfficialStarterForTooling(target: string, config: StarterConfi
     const file = assertNoSymlink(target, path);
     if (existsSync(file) && lstatSync(file).isFile()) unlinkSync(file);
   }
+  const gitignore = assertNoSymlink(target, ".gitignore");
+  const requiredIgnores = ["!.env.example", "/test-results/", "/playwright-report/"];
+  const existing = existsSync(gitignore) ? readFileSync(gitignore, "utf8") : "";
+  const missing = requiredIgnores.filter((entry) => !existing.split(/\r?\n/).includes(entry));
+  if (missing.length) writeFileSync(gitignore, `${existing.replace(/\s*$/, "")}\n${missing.join("\n")}\n`, "utf8");
+  const hook = assertNoSymlink(target, ".husky/pre-commit");
+  if (existsSync(hook)) chmodSync(hook, 0o755);
 }
 
 async function applyQuality(target: string, config: StarterConfigV3, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, outcome: Outcome): Promise<void> {
   const fileState = filesState(target, files);
   const manifestState = toolingState(target, manifest);
-  if (fileState === "satisfied" && manifestState === "satisfied") return void outcome.skipped.push(step.id);
+  if (fileState === "satisfied" && manifestState === "satisfied") {
+    normalizeOfficialStarterForTooling(target, config);
+    return void outcome.skipped.push(step.id);
+  }
   if (fileState === "different" || manifestState === "different") outcome.conflicts.push(step.id);
   writeFiles(target, files);
   applyToolingManifest(target, manifest);
@@ -286,7 +302,7 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
   const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
   const commandProgress: CommandProgress = {
     current: 0,
-    total: 1 + (options.skipInstall ? 0 : 1 + plan.steps.filter((step) => step.id === "install-dependencies" || step.id === "format-generated-source" || step.id === "install-browser").length + 1),
+    total: 1 + (options.skipInstall ? 0 : 1 + plan.steps.filter((step) => step.id === "install-shadcn-components" || step.id === "install-dependencies" || step.id === "format-generated-source" || step.id === "install-browser").length + 1),
   };
   const startFiles = renderStartOwnedFiles(config, plan);
   const agentFiles = renderAgentEntryPoints(config);
@@ -322,6 +338,21 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
       const official = plan.steps.find((candidate) => candidate.id === "official-shadcn-init")?.command;
       if (!official) fail("The execution plan is missing its official template contract.");
       await applyFiles(target, step, { ".start/v3-state.json": `${JSON.stringify({ version: 3, blueprint: plan.blueprint, officialCommand: official.command }, null, 2)}\n` }, outcome);
+      continue;
+    }
+    if (step.id === "install-shadcn-components") {
+      if (options.skipInstall) {
+        outcome.skipped.push(step.id);
+        continue;
+      }
+      const statePath = ".start/v3-shadcn-components.json";
+      if (pathExistsState(target, [statePath]) === "satisfied") outcome.skipped.push(step.id);
+      else {
+        if (!step.command) fail("The execution plan is missing the shadcn component command.");
+        runCommand(step.command.command, target, step.title, { environment: bootstrapEnvironment(config.packageManager), progress: commandProgress });
+        writeFiles(target, { [statePath]: `${JSON.stringify({ version: 1, blueprint: plan.blueprint, command: step.command.command }, null, 2)}\n` });
+        outcome.executed.push(step.id);
+      }
       continue;
     }
     if (step.id === "start-agent-instructions") {
@@ -380,9 +411,9 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
   // The matching state marker proves this is Start's mutable execution record;
   // it is deliberately refreshed on each resumable run rather than treated as
   // user configuration.
-  writeFiles(target, { "START_READINESS.md": renderReadinessReport({ plan, executed: outcome.executed, skipped: outcome.skipped, conflicts: outcome.conflicts, resolvedVersions: resolvedVersions(target), verification: { command: plan.verification.command, status: verificationStatus, details: options.skipInstall ? "Not ready: --skip-install bypassed dependency installation and verification." : undefined }, warnings: outcome.warnings }) });
+  writeFiles(target, { "docs/START_READINESS.md": renderReadinessReport({ plan, executed: outcome.executed, skipped: outcome.skipped, conflicts: outcome.conflicts, resolvedVersions: resolvedVersions(target), verification: { command: plan.verification.command, status: verificationStatus, details: options.skipInstall ? "Not ready: --skip-install bypassed dependency installation and verification." : undefined }, warnings: outcome.warnings }) });
   outcome.executed.push(readinessStep.id);
-  if (verificationFailed) fail(`${verification.title} failed. START_READINESS.md records the failed verification; the workspace was preserved for inspection and retry.`);
+  if (verificationFailed) fail(`${verification.title} failed. docs/START_READINESS.md records the failed verification; the workspace was preserved for inspection and retry.`);
   const gitStep = plan.steps.find((step) => step.id === "initialize-git");
   if (!gitStep) fail("The execution plan is missing Git initialization.");
   initializeGit(target);
@@ -421,7 +452,7 @@ async function main(): Promise<void> {
   if (!planAlreadyPrinted) stdout.write(renderPlanPreview(plan, useColor));
   if (options.planOnly) return;
   const outcome = await execute(config, plan, target, options);
-  console.log(`\nReadiness report written to ${resolve(target, "START_READINESS.md")}.`);
+  console.log(`\nReadiness report written to ${resolve(target, "docs/START_READINESS.md")}.`);
   console.log(`Executed: ${outcome.executed.join(", ") || "none"}`);
   console.log(`Skipped: ${outcome.skipped.join(", ") || "none"}`);
   console.log("Repository setup is complete. Await a PRD or requirements before implementing product behavior.");

@@ -1,12 +1,15 @@
 import { type AgentId, type ExecutionPlanV3, type StarterConfigV3 } from "./core.js";
 
-export const START_VERSION = "0.6.7";
+export const START_VERSION = "0.6.8";
 
 export type StartToolingManifest = {
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
   removeDevDependencies?: readonly string[];
+  packageManager?: string;
+  engines?: Record<string, string>;
+  lintStaged?: Record<string, string>;
 };
 
 export type ReadinessVerification = {
@@ -49,11 +52,9 @@ function addDependency(target: Record<string, string>, name: string, version: st
 
 /** Internal renderer/executor handshake; merge this into, never over, upstream package.json. */
 export function createStartToolingManifest(config: StarterConfigV3): StartToolingManifest {
-  // The upstream starter pins the versions current when it was published. A
-  // fresh Start workspace should instead resolve the current stable framework.
-  const dependencies: Record<string, string> = { next: "latest", react: "latest", "react-dom": "latest" };
-  const devDependencies: Record<string, string> = { "@types/node": "^24.5.0", typescript: "^5.9.2" };
-  const scripts: Record<string, string> = { typecheck: "tsc --noEmit" };
+  const dependencies: Record<string, string> = { next: "16.3.3", react: "19.2.8", "react-dom": "19.2.8" };
+  const devDependencies: Record<string, string> = { "@types/node": "24.13.3", typescript: "5.9.3", husky: "9.1.7", "lint-staged": "17.4.1" };
+  const scripts: Record<string, string> = { typecheck: "tsc --noEmit", prepare: "husky" };
   const removeDevDependencies: string[] = [];
 
   if (config.tooling === "biome") {
@@ -68,11 +69,11 @@ export function createStartToolingManifest(config: StarterConfigV3): StartToolin
     Object.assign(scripts, { lint: "eslint .", "lint:fix": "eslint . --fix", format: "prettier --write .", "format:check": "prettier --check ." });
   }
   if (config.testing.includes("vitest")) {
-    addDependency(devDependencies, "vitest", "latest");
+    addDependency(devDependencies, "vitest", "4.1.11");
     Object.assign(scripts, { test: "vitest run", "test:watch": "vitest" });
   }
   if (config.testing.includes("playwright")) {
-    addDependency(devDependencies, "@playwright/test", "latest");
+    addDependency(devDependencies, "@playwright/test", "1.62.1");
     Object.assign(scripts, { "test:e2e:install": "playwright install chromium", "test:e2e": "playwright test" });
   }
   if (config.databaseRequired && config.orm === "drizzle") {
@@ -112,35 +113,30 @@ export function createStartToolingManifest(config: StarterConfigV3): StartToolin
   if (config.testing.includes("playwright")) verify.push(run(config, "test:e2e"));
   verify.push(run(config, "build"));
   scripts.verify = verify.join(" && ");
-  return { scripts, dependencies, devDependencies, removeDevDependencies };
+  const packageManager = { pnpm: "pnpm@9.15.0", npm: "npm@11.4.2", yarn: "yarn@1.22.22", bun: "bun@1.4.0" }[config.packageManager];
+  return { scripts, dependencies, devDependencies, removeDevDependencies, packageManager, engines: { node: ">=24.3.0 <25" }, lintStaged: { "*.{js,jsx,ts,tsx,json,css,md}": "biome check --write --no-errors-on-unmatched" } };
 }
 
 function renderAgents(config: StarterConfigV3): string {
-  return `# Repository instructions
+  return `# Agent instructions
 
-This repository is ready for product work but has no product requirements yet. Await a PRD, accepted requirements, or an explicit user task before creating product pages, routes, entities, dashboards, upload flows, chat flows, or sample data.
+Read [the development guide](docs/DEVELOPMENT.md), [agent workflows](docs/AGENT_WORKFLOWS.md), [hook policy](docs/HOOKS.md), and the current [readiness report](docs/START_READINESS.md) before editing. Read [the execution plan](docs/START_PLAN.md) when a task touches selected infrastructure or project skills.
 
-## Delivery loop
+## Operating rules
 
-1. Read \`START_READINESS.md\` and the relevant requirement before editing.
-2. Keep provider integrations behind narrow server-side adapters.
-3. Make the smallest coherent change and add focused tests.
-4. Run \`${run(config, "verify")}\` before shipping.
-5. Report commands, results, and remaining risks.
+1. **Think before coding.** Inspect the relevant code, tests, and requirement; surface a material ambiguity before making a consequential assumption.
+2. **Simplicity first.** Choose the smallest requirement-backed design and avoid speculative layers, features, and abstractions.
+3. **Surgical changes.** Keep the diff focused on the requested behavior; preserve the installed shadcn components and selected provider boundaries unless the requirement changes them.
+4. **Goal-driven execution.** Define a checkable outcome, add or update focused tests, run \`${run(config, "verify")}\`, and report the exact result and remaining risk.
 
-## Safety rules
-
-- Do not expose secrets in client code, commits, logs, or browser bundles.
-- Check authorization at every protected server-side boundary; redirects are not authorization.
-- Ask before destructive changes, production mutations, or external messages.
-- Preserve the official shadcn-generated app, styles, components, fonts, and preset output unless a requirement explicitly changes them.
+Never expose secrets in code, commits, logs, or browser bundles. Check authorization at protected server boundaries. Ask before destructive changes, production mutations, or external messages.
 `;
 }
 
 function renderNativeAgentEntryPoints(config: StarterConfigV3): Record<string, string> {
-  const body = `Read /AGENTS.md and /START_READINESS.md before editing. Await a PRD or explicit requirements before product work. Run ${run(config, "verify")} before shipping.\n`;
+  const body = `Read /AGENTS.md and /docs/START_READINESS.md before editing. Follow /docs/DEVELOPMENT.md and /docs/AGENT_WORKFLOWS.md. Run ${run(config, "verify")} before shipping.\n`;
   const files: Partial<Record<AgentId, { path: string; content: string }>> = {
-    codex: { path: ".codex/instructions.md", content: body }, "claude-code": { path: "CLAUDE.md", content: body }, cursor: { path: ".cursor/rules/start.mdc", content: `---\ndescription: Start readiness contract\nalwaysApply: true\n---\n${body}` }, "github-copilot": { path: ".github/copilot-instructions.md", content: body }, "gemini-cli": { path: "GEMINI.md", content: body }, opencode: { path: "opencode.json", content: `${JSON.stringify({ instructions: ["AGENTS.md", "START_READINESS.md"] }, null, 2)}\n` }, windsurf: { path: ".windsurf/rules/start.md", content: body }, "grok-build": { path: ".grok/instructions.md", content: body },
+    codex: { path: ".codex/instructions.md", content: body }, "claude-code": { path: "CLAUDE.md", content: body }, cursor: { path: ".cursor/rules/start.mdc", content: `---\ndescription: Start readiness contract\nalwaysApply: true\n---\n${body}` }, "github-copilot": { path: ".github/copilot-instructions.md", content: body }, "gemini-cli": { path: "GEMINI.md", content: body }, opencode: { path: "opencode.json", content: `${JSON.stringify({ instructions: ["AGENTS.md", "docs/START_READINESS.md", "docs/DEVELOPMENT.md"] }, null, 2)}\n` }, windsurf: { path: ".windsurf/rules/start.md", content: body }, "grok-build": { path: ".grok/instructions.md", content: body },
   };
   return Object.fromEntries([config.primaryAgent, ...config.additionalAgents].map((agent) => {
     const file = files[agent];
@@ -152,7 +148,7 @@ function renderNativeAgentEntryPoints(config: StarterConfigV3): Record<string, s
 function renderWorkflows(config: StarterConfigV3): Record<string, string> {
   const requirements = "Await a PRD, accepted requirements, or an explicit user task before creating product behavior.";
   return {
-    ".agents/commands/implement.md": `# Implement\n\n${requirements}\n\nRead AGENTS.md and START_READINESS.md, identify the smallest requirement-backed vertical slice, then implement and test it. Preserve unselected provider boundaries.\n`,
+    ".agents/commands/implement.md": `# Implement\n\n${requirements}\n\nRead AGENTS.md and docs/START_READINESS.md, identify the smallest requirement-backed vertical slice, then implement and test it. Preserve unselected provider boundaries.\n`,
     ".agents/commands/verify.md": `# Verify\n\nRun \`${run(config, "verify")}\`. If browser verification is selected, inspect the running application in a real browser. Report exact commands and outcomes.\n`,
     ".agents/commands/review.md": "# Review\n\nReview the current diff for correctness, security, accessibility, provider leakage, missing tests, and unintended changes to official shadcn output. Cite actionable findings with file and line.\n",
     ".agents/commands/ship-check.md": `# Ship check\n\n${requirements}\n\nConfirm requirements, environment variables, migrations, CI, and \`${run(config, "verify")}\` are complete before shipping.\n`,
@@ -169,12 +165,26 @@ function renderEnvironmentDocumentation(plan: ExecutionPlanV3): string {
   return `# Environment contract\n\n${variables}\n\nAdd values locally in \`.env.local\`; do not commit secrets.\n`;
 }
 
+function renderProjectDocumentation(config: StarterConfigV3, plan: ExecutionPlanV3): Record<string, string> {
+  const packageManager = config.packageManager;
+  const command = (script: string) => run(config, script);
+  const hookCommand = packageLauncher(config, "lint-staged");
+  return {
+    "README.md": `# ${config.projectName}\n\nA verified Next.js workspace generated by [Start](https://github.com/Bishoymly/start). The installed shadcn preset and all available shadcn UI components are ready for requirement-backed product work.\n\n## Quick start\n\n\`\`\`bash\n${command("dev")}\n\`\`\`\n\nOpen [http://localhost:3000](http://localhost:3000). Before changing the project, read [AGENTS.md](./AGENTS.md) and [the development guide](./docs/DEVELOPMENT.md).\n\n## Documentation\n\n- [Development commands](./docs/DEVELOPMENT.md)\n- [Agent workflows and project skills](./docs/AGENT_WORKFLOWS.md)\n- [Git hooks](./docs/HOOKS.md)\n- [Execution plan](./docs/START_PLAN.md)\n- [Environment contract](./docs/START_ENVIRONMENT.md)\n- [Current readiness report](./docs/START_READINESS.md)\n`,
+    "docs/DEVELOPMENT.md": `# Development\n\n## Required runtime\n\nUse Node 24.3.0 (see \`.nvmrc\`) and ${packageManager}. The exact package-manager version is recorded in \`package.json\`.\n\n## Commands\n\n| Goal | Command |\n| --- | --- |\n| Start development | \`${command("dev")}\` |\n| Production build | \`${command("build")}\` |\n| Format files | \`${command("format")}\` |\n| Lint | \`${command("lint")}\` |\n| Type-check | \`${command("typecheck")}\` |\n| Unit tests | \`${command("test")}\` |\n| Browser tests | \`${command("test:e2e")}\` |\n| Full local gate | \`${command("verify")}\` |\n\nRun \`${command("test:e2e:install")}\` if Chromium is not installed. CI runs the same \`${command("verify")}\` command.\n`,
+    "docs/AGENT_WORKFLOWS.md": `# Agent workflows\n\nStart installs project-local skills for the selected agent in its native directory. The selected skills and expected paths are recorded in [START_PLAN.md](./START_PLAN.md).\n\nFor shared agent workflows, use:\n\n- \`.agents/commands/implement.md\` — make the smallest requirement-backed vertical slice.\n- \`.agents/commands/verify.md\` — run and report the verification gate.\n- \`.agents/commands/review.md\` — review the current diff for correctness, security, accessibility, and tests.\n- \`.agents/commands/ship-check.md\` — confirm readiness before shipping.\n\nEvery agent follows [AGENTS.md](../AGENTS.md): think before coding, keep work simple and surgical, and verify the stated goal.\n`,
+    "docs/HOOKS.md": `# Hooks\n\nHusky activates the committed \`.husky/pre-commit\` hook when dependencies are installed. It runs \`${hookCommand}\`, which applies Biome checks and safe fixes to staged source, JSON, CSS, and Markdown files.\n\nUse \`${command("verify")}\` before pushing; the pre-commit hook is intentionally faster and does not replace the full test, browser, and production-build gate. To bypass a hook only for an intentional emergency commit, use \`git commit --no-verify\` and record why in the pull request.\n`,
+  };
+}
+
 function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   const files: Record<string, string> = {
     "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "preserve", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./*"] } }, include: ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "**/*.ts", "**/*.tsx"], exclude: ["node_modules"] }, null, 2)}\n`,
     "next.config.ts": "import type { NextConfig } from \"next\";\n\nconst nextConfig: NextConfig = {\n  allowedDevOrigins: [\"127.0.0.1\"],\n};\n\nexport default nextConfig;\n",
+    ".nvmrc": "24.3.0\n",
+    ".husky/pre-commit": `#!/usr/bin/env sh\n${packageLauncher(config, "lint-staged")}\n`,
   };
-  if (config.tooling === "biome") files["biome.json"] = `${JSON.stringify({ $schema: "https://biomejs.dev/schemas/2.5.11/schema.json", vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }, files: { includes: ["**", "!!.next", "!!node_modules", "!!test-results", "!!playwright-report", "!!tsconfig.json"] }, formatter: { enabled: true, indentStyle: "space" }, linter: { enabled: true, rules: { preset: "recommended" } }, css: { parser: { tailwindDirectives: true } } }, null, 2)}\n`;
+  if (config.tooling === "biome") files["biome.json"] = `${JSON.stringify({ $schema: "https://biomejs.dev/schemas/2.5.11/schema.json", vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }, files: { includes: ["**", "!!.next", "!!node_modules", "!!test-results", "!!playwright-report", "!!tsconfig.json"] }, formatter: { enabled: true, indentStyle: "space" }, linter: { enabled: true, rules: { preset: "recommended" } }, overrides: [{ includes: ["components/ui/**"], linter: { enabled: false } }], css: { parser: { tailwindDirectives: true } } }, null, 2)}\n`;
   else {
     files["eslint.config.mjs"] = "import { defineConfig, globalIgnores } from \"eslint/config\";\nimport nextVitals from \"eslint-config-next/core-web-vitals\";\nimport nextTypeScript from \"eslint-config-next/typescript\";\nimport prettier from \"eslint-config-prettier/flat\";\nexport default defineConfig([...nextVitals, ...nextTypeScript, prettier, globalIgnores([\".next/**\", \"node_modules/**\"])]);\n";
     files["prettier.config.mjs"] = "const config = { semi: true, singleQuote: false, trailingComma: \"all\" };\nexport default config;\n";
@@ -182,7 +192,7 @@ function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   }
   if (config.testing.includes("vitest")) {
     files["vitest.config.ts"] = "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: { environment: \"node\", include: [\"tests/**/*.test.ts\"] } });\n";
-    files["tests/readiness.test.ts"] = "import { existsSync } from \"node:fs\";\nimport { expect, test } from \"vitest\";\n\ntest(\"Start project contracts exist before verification\", () => {\n  expect(existsSync(\"AGENTS.md\")).toBe(true);\n  expect(existsSync(\"START_PLAN.md\")).toBe(true);\n});\n";
+    files["tests/readiness.test.ts"] = "import { existsSync } from \"node:fs\";\nimport { expect, test } from \"vitest\";\n\ntest(\"Start project contracts exist before verification\", () => {\n  expect(existsSync(\"AGENTS.md\")).toBe(true);\n  expect(existsSync(\"docs/START_PLAN.md\")).toBe(true);\n});\n";
   }
   if (config.testing.includes("playwright")) {
     files["playwright.config.ts"] = `import { defineConfig, devices } from \"@playwright/test\";\nexport default defineConfig({ testDir: \"./tests/e2e\", webServer: { command: \"${packageLauncher(config, "next dev")} --port 3107\", url: \"http://127.0.0.1:3107\", reuseExistingServer: !process.env.CI }, use: { baseURL: \"http://127.0.0.1:3107\", trace: \"on-first-retry\" }, projects: [{ name: \"chromium\", use: { ...devices[\"Desktop Chrome\"] } }] });\n`;
@@ -195,7 +205,10 @@ function renderCi(config: StarterConfigV3, plan: ExecutionPlanV3): Record<string
   if (!config.ciEnabled) return {};
   const install = config.packageManager === "npm" ? "npm ci" : `${config.packageManager} install --frozen-lockfile`;
   const browser = config.testing.includes("playwright") ? `\n      - run: ${packageLauncher(config, "playwright install")} --with-deps chromium` : "";
-  if (config.ci === "github-actions") return { ".github/workflows/verify.yml": `name: Verify\non: [push, pull_request]\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 22\n      - run: ${install}${browser}\n      - run: ${plan.verification.command}\n` };
+  const setup = config.packageManager === "pnpm"
+    ? "      - uses: pnpm/action-setup@v4\n        with:\n          version: 9.15.0\n      - uses: actions/setup-node@v5\n        with:\n          node-version: 24.3.0\n          cache: pnpm"
+    : "      - uses: actions/setup-node@v5\n        with:\n          node-version: 24.3.0";
+  if (config.ci === "github-actions") return { ".github/workflows/verify.yml": `name: Verify\non: [push, pull_request]\njobs:\n  verify:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v5\n${setup}\n      - run: ${install}${browser}\n      - run: ${plan.verification.command}\n` };
   if (config.ci === "gitlab-ci") return { ".gitlab-ci.yml": `image: node:22\nverify:\n  script:\n    - ${install}\n    - ${plan.verification.command}\n` };
   return { "azure-pipelines.yml": `trigger:\n- main\npool:\n  vmImage: ubuntu-latest\nsteps:\n- task: NodeTool@0\n  inputs:\n    versionSpec: \"22.x\"\n- script: ${install}\n- script: ${plan.verification.command}\n` };
 }
@@ -232,10 +245,10 @@ function renderCapabilityLayers(config: StarterConfigV3): Record<string, string>
 export function renderStartOwnedFiles(config: StarterConfigV3, plan: ExecutionPlanV3): Record<string, string> {
   if (plan.version !== 3 || plan.blueprint.length === 0) throw new Error("A v3 execution plan is required.");
   return {
-    "AGENTS.md": renderAgents(config), "START_PLAN.md": renderPlanMarkdown(plan), "START_ENVIRONMENT.md": renderEnvironmentDocumentation(plan), ".env.example": renderEnvironmentExample(plan),
-    "START_READINESS.md": renderReadinessReport({ plan, executed: [], skipped: [], verification: { command: plan.verification.command, status: "pending", details: "Generation has not yet run verification." } }),
+    "AGENTS.md": renderAgents(config), "docs/START_PLAN.md": renderPlanMarkdown(plan), "docs/START_ENVIRONMENT.md": renderEnvironmentDocumentation(plan), ".env.example": renderEnvironmentExample(plan),
+    "docs/START_READINESS.md": renderReadinessReport({ plan, executed: [], skipped: [], verification: { command: plan.verification.command, status: "pending", details: "Generation has not yet run verification." } }),
     "start-tooling.json": `${JSON.stringify(createStartToolingManifest(config), null, 2)}\n`,
-    ...renderWorkflows(config), ...renderNativeAgentEntryPoints(config), ...renderQualityFiles(config), ...renderCi(config, plan), ...renderCapabilityLayers(config),
+    ...renderProjectDocumentation(config, plan), ...renderWorkflows(config), ...renderNativeAgentEntryPoints(config), ...renderQualityFiles(config), ...renderCi(config, plan), ...renderCapabilityLayers(config),
   };
 }
 

@@ -87,8 +87,8 @@ test("CLI executes the v3 plan through the no-network test seam and reports read
   const result = run(root, ["app", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(join(root, "app", "AGENTS.md")), true);
-  assert.equal(existsSync(join(root, "app", "START_READINESS.md")), true);
-  assert.match(readFileSync(join(root, "app", "START_READINESS.md"), "utf8"), /Await a PRD|requirements/i);
+  assert.equal(existsSync(join(root, "app", "docs", "START_READINESS.md")), true);
+  assert.match(readFileSync(join(root, "app", "docs", "START_READINESS.md"), "utf8"), /Await a PRD|requirements/i);
   assert.match(result.stdout, /━━ 01\/01  Initialize the official shadcn template/);
   assert.match(result.stdout, /↳ pnpm dlx shadcn@latest init/);
   assert.match(result.stdout, /Test seam: skipped Initialize the official shadcn template/);
@@ -110,7 +110,7 @@ test("CLI automatically overwrites Start-owned conflicts", () => {
   const rerun = run(root, args, { skipExecution: true });
   assert.equal(rerun.status, 0, rerun.stderr);
   assert.notEqual(readFileSync(agents, "utf8"), "user-owned conflict\n");
-  assert.match(readFileSync(join(root, "app", "START_READINESS.md"), "utf8"), /start-agent-instructions/);
+  assert.match(readFileSync(join(root, "app", "docs", "START_READINESS.md"), "utf8"), /start-agent-instructions/);
 });
 
 test("CLI groups skill installs into one command progress entry", () => {
