@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { dirname, resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import {
   buildExecutionPlan,
@@ -27,6 +26,7 @@ import { collectInteractiveWizardState, renderPlanPreview, renderSplash, Termina
 
 const webBuilderUrl = "https://bishoy.io/start";
 const useColor = Boolean(stdout.isTTY && !process.env.NO_COLOR);
+const lightBlue = (value: string) => useColor ? `\u001B[38;5;117m${value}\u001B[0m` : value;
 
 type FileState = "absent" | "satisfied" | "different";
 type Outcome = { executed: string[]; skipped: string[]; conflicts: string[]; warnings: string[] };
@@ -51,7 +51,6 @@ Usage:
 Options:
   --blueprint <token>  Execute a portable v3 blueprint
   --plan               Print the ordered execution plan without writing files or running commands
-  --overwrite <step>   Approve replacing one conflicting Start-owned plan step (repeatable)
   --skip-install       Skip project skill installation, dependency installation, and verification
   --web                Open ${webBuilderUrl}
   --help, -h           Show this help`);
@@ -69,15 +68,13 @@ function openWebBuilder(): void {
 
 function parseArguments(args: string[]) {
   const blueprintIndex = args.indexOf("--blueprint");
-  const overwriteIndexes = args.flatMap((argument, index) => argument === "--overwrite" ? [index] : []);
-  const optionValues = new Set([blueprintIndex + 1, ...overwriteIndexes.map((index) => index + 1)]);
+  const optionValues = new Set([blueprintIndex + 1]);
   const targets = args.filter((argument, index) => !argument.startsWith("-") && !optionValues.has(index));
   if (targets.length > 1) fail("Only one app name may be supplied.");
-  if (overwriteIndexes.some((index) => !args[index + 1] || args[index + 1].startsWith("-"))) fail("--overwrite requires a plan step ID, for example --overwrite start-quality.");
-  if (args.some((argument) => argument.startsWith("--") && !["--blueprint", "--plan", "--overwrite", "--skip-install", "--web", "--help"].includes(argument))) {
+  if (args.some((argument) => argument.startsWith("--") && !["--blueprint", "--plan", "--skip-install", "--web", "--help"].includes(argument))) {
     fail("Unknown option. Run with --help for supported options.");
   }
-  return { blueprint: blueprintIndex >= 0 ? args[blueprintIndex + 1] : undefined, target: targets[0], planOnly: args.includes("--plan"), overwrite: new Set(overwriteIndexes.map((index) => args[index + 1])), skipInstall: args.includes("--skip-install") };
+  return { blueprint: blueprintIndex >= 0 ? args[blueprintIndex + 1] : undefined, target: targets[0], planOnly: args.includes("--plan"), skipInstall: args.includes("--skip-install") };
 }
 
 function checkTarget(root: string, targetDirectory: string): string {
@@ -125,27 +122,15 @@ function writeFiles(target: string, files: Record<string, string>) {
   }
 }
 
-async function conflictDecision(step: ExecutionPlanStep, overwrite: Set<string>, interactive: boolean): Promise<"overwrite" | "preserve"> {
-  if (overwrite.has(step.id)) return "overwrite";
-  if (!interactive) fail(`Conflicting configuration for ${step.title}. Re-run with --overwrite ${step.id} to authorize only this plan step.`);
-  const prompt = createInterface({ input: stdin, output: stdout });
-  try {
-    const answer = (await prompt.question(`\n${step.title} differs from the selected blueprint. Overwrite this command or capability? [y/N] `)).trim().toLowerCase();
-    return answer === "y" || answer === "yes" ? "overwrite" : "preserve";
-  } finally {
-    prompt.close();
-  }
-}
-
 function runCommand(command: string, cwd: string, label: string, options: { allowFailure?: boolean; environment?: NodeJS.ProcessEnv; progress?: CommandProgress } = {}): boolean {
   if (options.progress) {
     options.progress.current += 1;
     const position = `${String(options.progress.current).padStart(2, "0")}/${String(options.progress.total).padStart(2, "0")}`;
-    console.log(`\n  ━━ ${position}  ${label}`);
-    console.log(`     ↳ ${command}`);
+    console.log(`\n  ${lightBlue(`━━ ${position}`)}  ${label}`);
+    console.log(`     ${lightBlue("↳")} ${command}`);
   } else {
-    console.log(`\n  ━━ ${label}`);
-    console.log(`     ↳ ${command}`);
+    console.log(`\n  ${lightBlue("━━")} ${label}`);
+    console.log(`     ${lightBlue("↳")} ${command}`);
   }
   if (process.env.START_TEST_SKIP_EXECUTION === "1") {
     console.log(`Test seam: skipped ${label}.`);
@@ -204,13 +189,10 @@ function initializeGit(target: string): void {
   else console.warn("Git initialization was skipped. Initialize it later with git init --initial-branch=main.");
 }
 
-async function applyFiles(target: string, step: ExecutionPlanStep, files: Record<string, string>, overwrite: Set<string>, interactive: boolean, outcome: Outcome): Promise<void> {
+async function applyFiles(target: string, step: ExecutionPlanStep, files: Record<string, string>, outcome: Outcome): Promise<void> {
   const state = filesState(target, files);
   if (state === "satisfied") return void outcome.skipped.push(step.id);
-  if (state === "different") {
-    outcome.conflicts.push(step.id);
-    if (await conflictDecision(step, overwrite, interactive) === "preserve") return void outcome.skipped.push(step.id);
-  }
+  if (state === "different") outcome.conflicts.push(step.id);
   writeFiles(target, files);
   outcome.executed.push(step.id);
 }
@@ -257,14 +239,11 @@ function applyToolingManifest(target: string, manifest: StartToolingManifest): v
   writeFiles(target, { "package.json": `${JSON.stringify(pkg, null, 2)}\n` });
 }
 
-async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, overwrite: Set<string>, interactive: boolean, outcome: Outcome): Promise<void> {
+async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, outcome: Outcome): Promise<void> {
   const fileState = filesState(target, files);
   const manifestState = toolingState(target, manifest);
   if (fileState === "satisfied" && manifestState === "satisfied") return void outcome.skipped.push(step.id);
-  if (fileState === "different" || manifestState === "different") {
-    outcome.conflicts.push(step.id);
-    if (await conflictDecision(step, overwrite, interactive) === "preserve") return void outcome.skipped.push(step.id);
-  }
+  if (fileState === "different" || manifestState === "different") outcome.conflicts.push(step.id);
   writeFiles(target, files);
   applyToolingManifest(target, manifest);
   outcome.executed.push(step.id);
@@ -274,7 +253,7 @@ function installSkills(plan: ExecutionPlanV3, target: string, progress: CommandP
   if (process.env.START_TEST_SKILL_OUTPUTS === "1") {
     writeFiles(target, Object.fromEntries(plan.skills.flatMap((skill) => skill.expectedPaths.map((path) => [path, "# test-only installed skill\n"]))));
   }
-  for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`, { progress });
+  runCommand(plan.skills.map((skill) => skill.installCommand).join(" && "), target, "Install selected project skills", { progress });
   if (pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
     fail("The official Skills CLI completed without producing every expected project-local skill file.");
   }
@@ -282,10 +261,9 @@ function installSkills(plan: ExecutionPlanV3, target: string, progress: CommandP
 
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
   const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
-  const interactive = Boolean(stdin.isTTY && stdout.isTTY && !options.blueprint);
   const commandProgress: CommandProgress = {
     current: 0,
-    total: 1 + (options.skipInstall ? 0 : plan.skills.length + plan.steps.filter((step) => step.id === "install-dependencies" || step.id === "install-browser").length + 1),
+    total: 1 + (options.skipInstall ? 0 : 1 + plan.steps.filter((step) => step.id === "install-dependencies" || step.id === "install-browser").length + 1),
   };
   const startFiles = renderStartOwnedFiles(config, plan);
   const agentFiles = renderAgentEntryPoints(config);
@@ -320,18 +298,18 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
     if (step.id === "record-start-state") {
       const official = plan.steps.find((candidate) => candidate.id === "official-shadcn-init")?.command;
       if (!official) fail("The execution plan is missing its official template contract.");
-      await applyFiles(target, step, { ".start/v3-state.json": `${JSON.stringify({ version: 3, blueprint: plan.blueprint, officialCommand: official.command }, null, 2)}\n` }, options.overwrite, interactive, outcome);
+      await applyFiles(target, step, { ".start/v3-state.json": `${JSON.stringify({ version: 3, blueprint: plan.blueprint, officialCommand: official.command }, null, 2)}\n` }, outcome);
       continue;
     }
     if (step.id === "start-agent-instructions") {
-      await applyFiles(target, step, agentFiles, options.overwrite, interactive, outcome);
+      await applyFiles(target, step, agentFiles, outcome);
       continue;
     }
     if (step.id === "start-project-contracts" || step.id === "start-quality" || step.id === "start-ci" || step.id.startsWith("capability-")) {
       const id = step.id === "start-project-contracts" ? "project-contracts" : step.id === "start-quality" ? "quality" : step.id === "start-ci" ? "ci" : step.id.slice("capability-".length);
       const scoped = scopedStartFiles(startFiles, id, agentFiles);
-      if (step.id === "start-quality") await applyQuality(target, step, scoped, toolingManifest, options.overwrite, interactive, outcome);
-      else if (Object.keys(scoped).length) await applyFiles(target, step, scoped, options.overwrite, interactive, outcome);
+      if (step.id === "start-quality") await applyQuality(target, step, scoped, toolingManifest, outcome);
+      else if (Object.keys(scoped).length) await applyFiles(target, step, scoped, outcome);
       else outcome.skipped.push(step.id);
       continue;
     }
@@ -344,8 +322,8 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
       if (state === "satisfied") outcome.skipped.push(step.id);
       else if (state === "different") {
         outcome.conflicts.push(step.id);
-        if (await conflictDecision(step, options.overwrite, interactive) === "preserve") outcome.skipped.push(step.id);
-        else { installSkills(plan, target, commandProgress); outcome.executed.push(step.id); }
+        installSkills(plan, target, commandProgress);
+        outcome.executed.push(step.id);
       } else { installSkills(plan, target, commandProgress); outcome.executed.push(step.id); }
       continue;
     }

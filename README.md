@@ -54,7 +54,7 @@ Start checks a command or capability's postcondition on reruns:
 2. Matching state is skipped.
 3. Differing state becomes one coherent conflict decision.
 
-The official template is resumable only when `.start/v3-state.json` matches the exact v3 blueprint; an existing official-looking directory without that marker is a conflict, never a silent skip. Interactive runs can preserve or explicitly overwrite one scoped configuration step. In non-interactive mode, authorize only the exact step, for example `--overwrite start-quality`; there is no global overwrite. Path traversal and symbolic-link escapes are rejected for every output path and ancestor before writing.
+The official template is resumable only when `.start/v3-state.json` matches the exact v3 blueprint; an existing official-looking directory without that marker is a conflict, never a silent skip. Start always replaces its own configuration files to match the selected blueprint, without prompting. Path traversal and symbolic-link escapes are rejected for every output path and ancestor before writing.
 
 When the readiness report is clean, the generated repository is ready for product work—but the agent instructions deliberately say to await a PRD or requirements before implementing product behavior.
 

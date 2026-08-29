@@ -2,6 +2,12 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.3] - 2026-08-29
+
+- Automatically overwrite Start-owned configuration to match the selected blueprint without prompts.
+- Group project skill installation into one command and use light-blue execution progress indicators.
+- Ensure selected quality tooling, including Playwright, is applied before dependencies and browser installation run.
+
 ## [0.6.2] - 2026-08-29
 
 - Fixed the published package allowlist so the CLI includes its pnpm bootstrap helper.
@@ -24,3 +30,4 @@ All notable changes to Start are documented here.
 [0.4.0]: https://github.com/bishoymly/start/releases/tag/v0.4.0
 [0.6.1]: https://github.com/bishoymly/start/releases/tag/v0.6.1
 [0.6.2]: https://github.com/bishoymly/start/releases/tag/v0.6.2
+[0.6.3]: https://github.com/bishoymly/start/releases/tag/v0.6.3

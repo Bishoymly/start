@@ -14,20 +14,20 @@ function tokenFor(projectName = "app") {
   return encodeV3Blueprint(resolveV3Config(state));
 }
 
-function run(root: string, args: string[], options: { skipExecution?: boolean } = {}) {
+function run(root: string, args: string[], options: { skipExecution?: boolean; skillOutputs?: boolean } = {}) {
   return spawnSync(process.execPath, [cli.pathname, ...args], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, ...(options.skipExecution ? { START_TEST_SKIP_EXECUTION: "1" } : {}) },
+    env: { ...process.env, ...(options.skipExecution ? { START_TEST_SKIP_EXECUTION: "1" } : {}), ...(options.skillOutputs ? { START_TEST_SKILL_OUTPUTS: "1" } : {}) },
   });
 }
 
-test("CLI help documents v3, plan-only, overwrite, and web modes", () => {
+test("CLI help documents v3, plan-only, and web modes", () => {
   const result = run(process.cwd(), ["--help"]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /v3\.<token>/);
   assert.match(result.stdout, /--plan/);
-  assert.match(result.stdout, /--overwrite/);
+  assert.doesNotMatch(result.stdout, /--overwrite/);
   assert.match(result.stdout, /--web/);
   assert.match(result.stdout, /\[app-name\]/);
   assert.doesNotMatch(result.stdout, /target-folder/);
@@ -95,7 +95,7 @@ test("CLI executes the v3 plan through the no-network test seam and reports read
   assert.match(result.stdout, /Skipped:.*install-project-skills/);
 });
 
-test("CLI fails safely on a Start-owned conflict unless overwrite is explicit", () => {
+test("CLI automatically overwrites Start-owned conflicts", () => {
   const root = mkdtempSync(join(tmpdir(), "start-conflict-"));
   const args = ["app", "--blueprint", tokenFor(), "--skip-install"];
   const initial = run(root, args, { skipExecution: true });
@@ -107,13 +107,18 @@ test("CLI fails safely on a Start-owned conflict unless overwrite is explicit", 
   writeFileSync(join(root, "app", "components.json"), "{}\n", "utf8");
   const agents = join(root, "app", "AGENTS.md");
   writeFileSync(agents, "user-owned conflict\n", "utf8");
-  const conflict = run(root, args, { skipExecution: true });
-  assert.equal(conflict.status, 1);
-  assert.match(conflict.stderr, /Conflicting configuration for Add durable agent instructions/);
-  assert.equal(readFileSync(agents, "utf8"), "user-owned conflict\n");
-  const overwrite = run(root, [...args, "--overwrite", "start-agent-instructions"], { skipExecution: true });
-  assert.equal(overwrite.status, 0, overwrite.stderr);
+  const rerun = run(root, args, { skipExecution: true });
+  assert.equal(rerun.status, 0, rerun.stderr);
   assert.notEqual(readFileSync(agents, "utf8"), "user-owned conflict\n");
+  assert.match(readFileSync(join(root, "app", "START_READINESS.md"), "utf8"), /start-agent-instructions/);
+});
+
+test("CLI groups skill installs into one command progress entry", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-skills-grouped-"));
+  const result = run(root, ["app", "--blueprint", tokenFor()], { skipExecution: true, skillOutputs: true });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal((result.stdout.match(/━━ \d+\/\d+  Install selected project skills/g) ?? []).length, 1);
+  assert.match(result.stdout, /design-taste-frontend.*&&.*next-dev-loop.*&&.*agent-browser/s);
 });
 
 test("CLI rejects an unknown official-like target and every planned symlink write", (context) => {
