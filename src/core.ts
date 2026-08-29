@@ -793,6 +793,10 @@ export function recomputeRecommendationsV3(input: WizardStateV3): V3Recommendati
   const state = structuredClone(input);
   const changed: string[] = [];
   const reasons: string[] = [];
+  if (state.targetDirectory.value !== state.projectName.value || state.targetDirectory.source !== state.projectName.source) {
+    state.targetDirectory = structuredClone(state.projectName);
+    changed.push("Target folder");
+  }
   if (state.authentication.value === "better-auth") {
     state.authMethods = setRecommended(state.authMethods, ["email-password"], "Sign-in methods", changed);
     state.databaseRequired = setRecommended(state.databaseRequired, true, "Database requirement", changed);
@@ -821,7 +825,7 @@ export function setV3UserDecision<K extends Exclude<keyof WizardStateV3, "versio
   const next = structuredClone(state);
   const previousHosting = next.hosting.value;
   (next[key] as Decision<unknown>) = { value, source: "user" };
-  if (key === "projectName" && next.targetDirectory.source === "recommended") next.targetDirectory = recommended(String(value));
+  if (key === "projectName") next.targetDirectory = { value: String(value), source: "user" };
   if (key === "databaseRequired") {
     if (!value) {
       next.dormant.databaseProvider = next.databaseProvider;
@@ -864,6 +868,7 @@ export function validateV3Config(config: StarterConfigV3): ValidationResult {
   if (config.version !== 3) errors.push("Blueprint must use schema version 3.");
   if (!isValidProjectName(config.projectName)) errors.push("Project name must use 1–50 lowercase letters, numbers, or hyphens.");
   if (!isValidTargetDirectory(config.targetDirectory)) errors.push("Target folder must be a safe relative path without spaces, backslashes, or parent-directory segments.");
+  if (config.targetDirectory !== config.projectName) errors.push("Target folder must match the project name.");
   if (!agents.includes(config.primaryAgent) || !config.additionalAgents.every((agent) => agents.includes(agent))) errors.push("Blueprint includes an unsupported agent.");
   if (!isShadcnPreset(config.shadcnPreset)) errors.push("The shadcn preset is invalid. Import it again from ui.shadcn.com/create.");
   if (config.authentication === "better-auth" && (!config.databaseRequired || !config.databaseProvider || !config.orm || config.authMethods.length === 0)) errors.push("Better Auth requires a database, ORM, and at least one sign-in method.");
@@ -887,7 +892,7 @@ export function resolveV3Config(state: WizardStateV3, validate = true): StarterC
   const config: StarterConfigV3 = {
     version: 3,
     projectName: state.projectName.value,
-    targetDirectory: state.targetDirectory.value,
+    targetDirectory: state.projectName.value,
     primaryAgent: state.primaryAgent.value,
     additionalAgents: [...new Set(state.additionalAgents.value.filter((agent) => agent !== state.primaryAgent.value))],
     packageManager: state.packageManager.value,
@@ -967,7 +972,7 @@ export function encodeV3Blueprint(config: StarterConfigV3): string {
 }
 
 function commandLauncher(packageManager: PackageManager): string {
-  return { npm: "npx", pnpm: "pnpm dlx", yarn: "yarn dlx", bun: "bunx" }[packageManager];
+  return { npm: "npx --yes", pnpm: "pnpm dlx", yarn: "yarn dlx", bun: "bunx" }[packageManager];
 }
 
 function packageLauncherForPlan(config: Pick<StarterConfigV3, "packageManager">): string {
@@ -975,7 +980,7 @@ function packageLauncherForPlan(config: Pick<StarterConfigV3, "packageManager">)
 }
 
 export function buildV3StarterCommand(config: StarterConfigV3, options: { planOnly?: boolean } = {}): string {
-  return `${commandLauncher(config.packageManager)} @bishoymly/start@latest ${config.targetDirectory} --blueprint ${encodeV3Blueprint(config)}${options.planOnly ? " --plan" : ""}`;
+  return `${commandLauncher(config.packageManager)} @bishoymly/start@latest ${config.projectName} --blueprint ${encodeV3Blueprint(config)}${options.planOnly ? " --plan" : ""}`;
 }
 
 function agentSet(config: StarterConfigV3): AgentId[] {
@@ -1030,11 +1035,12 @@ export function buildExecutionPlan(config: StarterConfigV3): ExecutionPlanV3 {
   // receives its native project-local skill directory, not a generic copy.
   const skills = agentSet(config).flatMap((agent) => [
     { id: `design-taste-frontend-${agent}`, source: "leonxlnx/taste-skill", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/design-taste-frontend/SKILL.md`], installCommand: `${launcher} skills add leonxlnx/taste-skill --skill design-taste-frontend --agent ${agent} --yes` },
-    { id: `browser-verification-${agent}`, source: "vercel-labs/agent-skills", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/browser-verification/SKILL.md`], installCommand: `${launcher} skills add vercel-labs/agent-skills --skill browser-verification --agent ${agent} --yes` },
+    { id: `next-dev-loop-${agent}`, source: "vercel/next.js", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/next-dev-loop/SKILL.md`], installCommand: `${launcher} skills add vercel/next.js --skill next-dev-loop --agent ${agent} --yes` },
+    { id: `agent-browser-${agent}`, source: "vercel-labs/agent-browser", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/agent-browser/SKILL.md`], installCommand: `${launcher} skills add vercel-labs/agent-browser --skill agent-browser --agent ${agent} --yes` },
   ] satisfies SkillContract[]);
   const capabilities = capabilitiesForV3(config);
   const steps: ExecutionPlanStep[] = [
-    { id: "official-shadcn-init", kind: "official-command", owner: "official", title: "Initialize the official shadcn template", description: "Runs the documented upstream CLI first and preserves every file it creates.", command: { command: `${launcher} shadcn@latest init --template next --base ${base} --preset ${config.shadcnPreset.code} --yes`, postcondition: "absent", conflictPolicy: "prompt", affectedPaths: ["app", "components", "components.json", "package.json"] } },
+    { id: "official-shadcn-init", kind: "official-command", owner: "official", title: "Initialize the official shadcn template", description: "Runs the documented upstream CLI non-interactively and preserves every file it creates.", command: { command: `${launcher} shadcn@latest init --name ${config.projectName} --template next --base ${base} --preset ${config.shadcnPreset.code} --no-monorepo --yes`, postcondition: "absent", conflictPolicy: "prompt", affectedPaths: ["app", "components", "components.json", "package.json"] } },
     { id: "record-start-state", kind: "start-configuration", owner: "start", title: "Record Start v3 template state", description: "Records the selected official template contract so only a prior Start run can be resumed.", operations: ["write .start/v3-state.json"] },
     { id: "start-project-contracts", kind: "start-configuration", owner: "start", title: "Write project contracts", description: "Writes the execution plan, environment contract, tooling manifest, and readiness guidance owned by Start.", operations: ["write START_PLAN.md", "write START_ENVIRONMENT.md", "write .env.example", "write start-tooling.json"] },
     { id: "start-agent-instructions", kind: "start-configuration", owner: "start", title: "Add durable agent instructions", description: "Adds AGENTS.md and selected native agent entry points; instructions require waiting for PRD or requirements.", operations: ["write AGENTS.md", "write selected native agent entry points"] },

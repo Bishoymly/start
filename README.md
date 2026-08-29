@@ -41,7 +41,7 @@ Start orchestrates the official [shadcn CLI](https://ui.shadcn.com/docs/cli) rat
 - strict TypeScript; Biome or ESLint with Prettier
 - Vitest, Playwright with Chromium, and one `verify` command that includes the production build
 - CI that runs that exact verification command
-- `AGENTS.md`, native entry points for selected agents, full project-local skills, and browser-verification guidance
+- `AGENTS.md`, native entry points for selected agents, and project-local design, `next-dev-loop`, and `agent-browser` skills
 - optional database/migration, authentication, storage, AI-provider, observability, and deployment plumbing
 
 Conditional capabilities create durable framework layers, dependencies, commands, and environment contracts only. Unselected capabilities do not leak files, dependencies, or variables into the result.

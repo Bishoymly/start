@@ -13,11 +13,16 @@ test("v3 is the only public blueprint surface and has no product-shaping fields"
   assert.throws(() => decodeV3Blueprint("v2.anything"), /v3 is required/);
 });
 
-test("shadcn presets are parsed but the plan uses only documented init flags", () => {
+test("shadcn presets are parsed and initialization is fully non-interactive", () => {
   assert.equal(parseShadcnPresetInput("npx shadcn@latest init --template next --base base --preset b0 --yes").foundation, "base-ui");
   const plan = buildExecutionPlan(resolveV3Config(createDefaultState()));
-  assert.equal(plan.steps[0]?.command?.command, "pnpm dlx shadcn@latest init --template next --base base --preset b0 --yes");
+  assert.equal(plan.steps[0]?.command?.command, "pnpm dlx shadcn@latest init --name my-app --template next --base base --preset b0 --no-monorepo --yes");
   assert.equal(plan.steps.some((step) => step.command?.command.includes("--force")), false);
+
+  let npmState = createDefaultState();
+  npmState = setV3UserDecision(npmState, "packageManager", "npm").state;
+  const npmPlan = buildExecutionPlan(resolveV3Config(npmState));
+  assert.match(npmPlan.steps[0]?.command?.command ?? "", /^npx --yes shadcn@latest init --name my-app /);
 });
 
 test("v3 blueprints and selected agent skills are deterministic", () => {
@@ -30,8 +35,22 @@ test("v3 blueprints and selected agent skills are deterministic", () => {
   const plan = buildExecutionPlan(config);
   assert.equal(plan.skills.some((skill) => skill.installCommand.includes("--agent codex") && skill.expectedPaths[0]?.startsWith(".agents/skills/")), true);
   assert.equal(plan.skills.some((skill) => skill.installCommand.includes("--agent claude-code") && skill.expectedPaths[0]?.startsWith(".claude/skills/")), true);
+  assert.equal(plan.skills.some((skill) => skill.source === "vercel/next.js" && skill.id === "next-dev-loop-codex"), true);
+  assert.equal(plan.skills.some((skill) => skill.source === "vercel-labs/agent-browser" && skill.id === "agent-browser-codex"), true);
+  assert.equal(plan.skills.some((skill) => skill.id.includes("browser-verification")), false);
   assert.equal(plan.steps.some((step) => step.id === "install-dependencies"), true);
   assert.equal(plan.steps.some((step) => step.id === "install-browser"), true);
   assert.equal(plan.steps.some((step) => step.id === "record-readiness"), true);
   assert.equal(plan.steps.some((step) => step.id === "initialize-git"), true);
+});
+
+test("project name is the app folder across state, blueprints, and commands", () => {
+  let state = createDefaultState();
+  state = setV3UserDecision(state, "projectName", "agent-console").state;
+  state = setV3UserDecision(state, "targetDirectory", "apps/console").state;
+  const config = resolveV3Config(state);
+
+  assert.equal(config.targetDirectory, "agent-console");
+  assert.equal(decodeV3Blueprint(encodeV3Blueprint(config)).targetDirectory, "agent-console");
+  assert.match(buildV3StarterCommand(config), /^pnpm dlx @bishoymly\/start@latest agent-console /);
 });
