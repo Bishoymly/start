@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
+import { Readable, Writable } from "node:stream";
 import test from "node:test";
 import { resolveV3Config } from "./core.js";
-import { collectInteractiveWizardState, interactiveQuestionIds, type InteractivePrompter, type PromptChoice } from "./interactive.js";
+import { collectInteractiveWizardState, interactiveQuestionIds, renderSplash, TerminalPrompter, type InteractivePrompter, type PromptChoice } from "./interactive.js";
+
+test("interactive splash uses a compact Claude-style welcome panel", () => {
+  const splash = renderSplash("1.2.3");
+  assert.match(splash, /✦  START  v1\.2\.3/);
+  assert.match(splash, /Answer once · review the plan · verify it\./);
+  const borderedLines = splash.split("\n").filter((line) => line.startsWith("╭") || line.startsWith("│") || line.startsWith("╰"));
+  assert.equal(new Set(borderedLines.map((line) => [...line].length)).size, 1);
+});
+
+test("terminal prompts render a familiar question and resolved answer", async () => {
+  let output = "";
+  const sink = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
+  const prompter = new TerminalPrompter(Readable.from(["\n"]), sink);
+  assert.equal(await prompter.text("projectName", "What should we call your app?", "my-app"), "my-app");
+  prompter.close();
+  assert.match(output, /◇  What should we call your app\?/);
+  assert.match(output, /◆  my-app/);
+});
 
 class RecordingPrompter implements InteractivePrompter {
   readonly asked: string[] = [];
@@ -36,10 +55,12 @@ test("interactive defaults collect only v3 workspace decisions", async () => {
   const state = await collectInteractiveWizardState(prompter);
   const config = resolveV3Config(state);
   const conditional = new Set(["authMethods", "databaseProvider", "orm"]);
+  assert.equal(prompter.asked.includes("targetDirectory"), false);
   assert.deepEqual(prompter.asked, interactiveQuestionIds.filter((id) => !conditional.has(id)));
   assert.equal(state.version, 3);
   assert.equal(state.stage, "review");
   assert.equal(config.packageManager, "pnpm");
+  assert.equal(config.targetDirectory, config.projectName);
   assert.equal("startingSurface" in state, false);
   assert.equal("designReference" in state, false);
   assert.equal("theme" in config, false);
@@ -49,7 +70,6 @@ test("interactive defaults collect only v3 workspace decisions", async () => {
 test("interactive advanced v3 choices preserve conditional infrastructure and delivery settings", async () => {
   const prompter = new RecordingPrompter({
     projectName: "agent-console",
-    targetDirectory: "apps/console",
     packageManager: "npm",
     tooling: "eslint-prettier",
     agents: ["claude-code", "codex"],
@@ -73,7 +93,7 @@ test("interactive advanced v3 choices preserve conditional infrastructure and de
   const config = resolveV3Config(await collectInteractiveWizardState(prompter));
   assert.deepEqual(prompter.asked, [...interactiveQuestionIds]);
   assert.equal(config.projectName, "agent-console");
-  assert.equal(config.targetDirectory, "apps/console");
+  assert.equal(config.targetDirectory, "agent-console");
   assert.equal(config.primaryAgent, "claude-code");
   assert.deepEqual(config.additionalAgents, ["codex"]);
   assert.equal(config.databaseProvider, "aws-rds");

@@ -19,10 +19,11 @@ import {
   renderPlanMarkdown,
   renderReadinessReport,
   renderStartOwnedFiles,
+  START_VERSION,
   createStartToolingManifest,
   type StartToolingManifest,
 } from "./render.js";
-import { collectInteractiveWizardState, TerminalPrompter } from "./interactive.js";
+import { collectInteractiveWizardState, renderSplash, TerminalPrompter } from "./interactive.js";
 
 const webBuilderUrl = "https://bishoy.io/start";
 
@@ -41,8 +42,8 @@ function printHelp() {
 Turn an empty folder into a verified, agent-ready Next.js repository in one reviewable run.
 
 Usage:
-  pnpm dlx @bishoymly/start@latest [target-folder] --blueprint v3.<token>
-  pnpm dlx @bishoymly/start@latest [target-folder] --blueprint v3.<token> --plan
+  pnpm dlx @bishoymly/start@latest [app-name] --blueprint v3.<token>
+  pnpm dlx @bishoymly/start@latest [app-name] --blueprint v3.<token> --plan
   pnpm dlx @bishoymly/start@latest --web
 
 Options:
@@ -69,7 +70,7 @@ function parseArguments(args: string[]) {
   const overwriteIndexes = args.flatMap((argument, index) => argument === "--overwrite" ? [index] : []);
   const optionValues = new Set([blueprintIndex + 1, ...overwriteIndexes.map((index) => index + 1)]);
   const targets = args.filter((argument, index) => !argument.startsWith("-") && !optionValues.has(index));
-  if (targets.length > 1) fail("Only one target folder may be supplied.");
+  if (targets.length > 1) fail("Only one app name may be supplied.");
   if (overwriteIndexes.some((index) => !args[index + 1] || args[index + 1].startsWith("-"))) fail("--overwrite requires a plan step ID, for example --overwrite start-quality.");
   if (args.some((argument) => argument.startsWith("--") && !["--blueprint", "--plan", "--overwrite", "--skip-install", "--web", "--help"].includes(argument))) {
     fail("Unknown option. Run with --help for supported options.");
@@ -272,7 +273,6 @@ function installSkills(plan: ExecutionPlanV3, target: string): void {
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
   const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
   const interactive = Boolean(stdin.isTTY && stdout.isTTY && !options.blueprint);
-  mkdirSync(target, { recursive: true });
   const startFiles = renderStartOwnedFiles(config, plan);
   const agentFiles = renderAgentEntryPoints(config);
   const toolingManifest = createStartToolingManifest(config);
@@ -289,7 +289,12 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
         // official-looking directory. A v3 marker is the sole resumability proof.
         fail(`Existing official-like files have no matching Start v3 state marker. Preserve them or choose a new target; ${step.id} cannot be overwritten.`);
       } else {
-        runCommand(contract.command, target, step.title);
+        // shadcn creates <cwd>/<name>. Run it from the parent so the known app
+        // name resolves to the target itself instead of a nested app/app folder.
+        runCommand(contract.command, dirname(target), step.title);
+        // The no-network test seam does not synthesize upstream output.
+        // Production shadcn creates this directory itself.
+        if (!existsSync(target)) mkdirSync(target, { recursive: true });
         outcome.executed.push(step.id);
       }
       continue;
@@ -374,6 +379,7 @@ async function main(): Promise<void> {
     try { config = decodeV3Blueprint(options.blueprint); } catch (error) { fail(error instanceof Error ? error.message : "Invalid v3 blueprint."); }
   } else {
     if (!stdin.isTTY || !stdout.isTTY) fail(`Interactive setup requires a terminal. Use --blueprint v3.<token> or open ${webBuilderUrl}.`);
+    stdout.write(renderSplash(START_VERSION));
     const prompter = new TerminalPrompter();
     try {
       config = resolveV3Config(await collectInteractiveWizardState(prompter, options.target));
@@ -385,9 +391,10 @@ async function main(): Promise<void> {
       prompter.close();
     }
   }
-  const targetDirectory = options.target ?? config.targetDirectory;
-  const target = checkTarget(realpathSync(process.cwd()), targetDirectory);
-  config = { ...config, targetDirectory };
+  if (options.blueprint && options.target && options.target !== config.projectName) {
+    fail("The app name argument must match the project name in the blueprint.");
+  }
+  const target = checkTarget(realpathSync(process.cwd()), config.projectName);
   const plan = buildExecutionPlan(config);
   if (!planAlreadyPrinted) console.log(renderPlanMarkdown(plan));
   if (options.planOnly) return;

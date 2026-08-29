@@ -8,9 +8,9 @@ import { createDefaultState, encodeV3Blueprint, resolveV3Config, setV3UserDecisi
 
 const cli = new URL("./cli.js", import.meta.url);
 
-function tokenFor(targetDirectory = "generated-app") {
+function tokenFor(projectName = "app") {
   let state = createDefaultState();
-  state = setV3UserDecision(state, "targetDirectory", targetDirectory).state;
+  state = setV3UserDecision(state, "projectName", projectName).state;
   return encodeV3Blueprint(resolveV3Config(state));
 }
 
@@ -29,11 +29,13 @@ test("CLI help documents v3, plan-only, overwrite, and web modes", () => {
   assert.match(result.stdout, /--plan/);
   assert.match(result.stdout, /--overwrite/);
   assert.match(result.stdout, /--web/);
+  assert.match(result.stdout, /\[app-name\]/);
+  assert.doesNotMatch(result.stdout, /target-folder/);
 });
 
 test("CLI plan-only prints the v3 ordered plan without creating a target", () => {
   const root = mkdtempSync(join(tmpdir(), "start-plan-"));
-  const result = run(root, ["apps/web", "--blueprint", tokenFor(), "--plan"]);
+  const result = run(root, ["app", "--blueprint", tokenFor(), "--plan"]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Initialize the official shadcn template/);
   assert.match(result.stdout, /--template next/);
@@ -53,17 +55,22 @@ test("CLI rejects legacy tokens and a missing v3 token before writing", () => {
   assert.equal(existsSync(join(root, "my-app")), false);
 });
 
-test("CLI rejects unsafe and symlink targets without writing", (context) => {
+test("CLI rejects an app name that differs from the blueprint", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-app-name-"));
+  const result = run(root, ["other-app", "--blueprint", tokenFor("agent-console"), "--plan"]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /app name.*blueprint/i);
+  assert.equal(existsSync(join(root, "other-app")), false);
+});
+
+test("CLI rejects a symlink app folder without writing", (context) => {
   const root = mkdtempSync(join(tmpdir(), "start-safe-target-"));
-  const unsafe = run(root, ["../outside", "--blueprint", tokenFor(), "--plan"]);
-  assert.equal(unsafe.status, 1);
-  assert.match(unsafe.stderr, /safe relative path/);
   const outside = mkdtempSync(join(tmpdir(), "start-safe-outside-"));
   try { symlinkSync(outside, join(root, "linked"), "dir"); } catch { context.skip("Directory symlinks are unavailable in this environment."); return; }
-  const linked = run(root, ["linked/app", "--blueprint", tokenFor(), "--plan"]);
+  const linked = run(root, ["linked", "--blueprint", tokenFor("linked"), "--plan"]);
   assert.equal(linked.status, 1);
   assert.match(linked.stderr, /symbolic links/);
-  assert.equal(existsSync(join(outside, "app")), false);
+  assert.equal(existsSync(join(outside, "AGENTS.md")), false);
 });
 
 test("CLI executes the v3 plan through the no-network test seam and reports readiness", () => {
@@ -113,7 +120,7 @@ test("CLI rejects an unknown official-like target and every planned symlink writ
   const outside = join(root, "outside-agents.md");
   writeFileSync(outside, "outside\n");
   try { symlinkSync(outside, join(target, "AGENTS.md")); } catch { context.skip("File symlinks are unavailable in this environment."); return; }
-  const linked = run(root, ["safe", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
+  const linked = run(root, ["safe", "--blueprint", tokenFor("safe"), "--skip-install"], { skipExecution: true });
   assert.equal(linked.status, 1);
   assert.match(linked.stderr, /symbolic link/);
   assert.equal(readFileSync(outside, "utf8"), "outside\n");

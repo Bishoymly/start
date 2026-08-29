@@ -7,7 +7,6 @@ import {
   createDefaultState,
   databaseOptionsByHosting,
   isValidProjectName,
-  isValidTargetDirectory,
   parseShadcnPresetInput,
   recomputeRecommendationsV3,
   setV3UserDecision,
@@ -35,10 +34,11 @@ export interface InteractivePrompter {
   multiSelect<T extends string>(id: string, message: string, choices: readonly PromptChoice<T>[], defaultValues: readonly T[]): Promise<T[]>;
   confirm(id: string, message: string, defaultValue: boolean): Promise<boolean>;
   note(message: string): void;
+  section?(title: string): void;
 }
 
 export const interactiveQuestionIds = [
-  "projectName", "targetDirectory", "packageManager", "tooling", "agents", "uiFoundation", "shadcnPreset",
+  "projectName", "packageManager", "tooling", "agents", "uiFoundation", "shadcnPreset",
   "hosting", "codeHost",
   "authentication", "authMethods", "databaseRequired", "databaseProvider", "orm", "storage", "aiProviders",
   "ciEnabled", "vitest", "playwright", "opentelemetry", "sentry",
@@ -66,28 +66,27 @@ async function nonEmptySelection<T extends string>(prompter: InteractivePrompter
  * Collect only durable workspace decisions. Presentation and product questions
  * intentionally belong in the PRD that follows workspace creation.
  */
-export async function collectInteractiveWizardState(prompter: InteractivePrompter, initialTargetDirectory?: string): Promise<WizardStateV3> {
+export async function collectInteractiveWizardState(prompter: InteractivePrompter, initialProjectName?: string): Promise<WizardStateV3> {
   let state = createDefaultState();
 
-  const projectName = await validText(prompter, "projectName", "Project name", state.projectName.value, isValidProjectName, "Use 1–50 lowercase letters, numbers, or hyphens.");
+  prompter.section?.("Project");
+  const projectName = await validText(prompter, "projectName", "What should we call your app?", initialProjectName ?? state.projectName.value, isValidProjectName, "Use 1–50 lowercase letters, numbers, or hyphens.");
   state = setV3UserDecision(state, "projectName", projectName).state;
-  const targetDefault = initialTargetDirectory ?? state.targetDirectory.value;
-  const targetDirectory = await validText(prompter, "targetDirectory", "Target folder", targetDefault, isValidTargetDirectory, "Use a safe relative path without spaces, backslashes, or parent-directory segments.");
-  state = setV3UserDecision(state, "targetDirectory", targetDirectory).state;
 
-  state = setV3UserDecision(state, "packageManager", await prompter.select<PackageManager>("packageManager", "Package manager", choices(["pnpm", "bun", "npm", "yarn"], { yarn: "Yarn", bun: "Bun" }), state.packageManager.value)).state;
-  state = setV3UserDecision(state, "tooling", await prompter.select<ToolingChoice>("tooling", "Code quality", choices(["biome", "eslint-prettier"], { biome: "Biome", "eslint-prettier": "ESLint + Prettier" }), state.tooling.value)).state;
+  state = setV3UserDecision(state, "packageManager", await prompter.select<PackageManager>("packageManager", "Which package manager do you use?", choices(["pnpm", "bun", "npm", "yarn"], { yarn: "Yarn", bun: "Bun" }), state.packageManager.value)).state;
+  state = setV3UserDecision(state, "tooling", await prompter.select<ToolingChoice>("tooling", "Which code-quality setup should we configure?", choices(["biome", "eslint-prettier"], { biome: "Biome", "eslint-prettier": "ESLint + Prettier" }), state.tooling.value)).state;
 
-  const selectedAgents = await nonEmptySelection(prompter, "agents", "Coding agents", choices(agents, agentLabels), [state.primaryAgent.value, ...state.additionalAgents.value]);
+  prompter.section?.("Agents & UI");
+  const selectedAgents = await nonEmptySelection(prompter, "agents", "Which coding agents should get project skills?", choices(agents, agentLabels), [state.primaryAgent.value, ...state.additionalAgents.value]);
   state = setV3UserDecision(state, "primaryAgent", selectedAgents[0] as AgentId).state;
   state = setV3UserDecision(state, "additionalAgents", selectedAgents.slice(1) as AgentId[]).state;
   state.stage = "agents";
 
   state.stage = "preset";
 
-  state = setV3UserDecision(state, "uiFoundation", await prompter.select<UiFoundation>("uiFoundation", "shadcn foundation", choices(["base-ui", "radix-ui"], { "base-ui": "Base UI", "radix-ui": "Radix UI" }), state.uiFoundation.value)).state;
+  state = setV3UserDecision(state, "uiFoundation", await prompter.select<UiFoundation>("uiFoundation", "Which shadcn component foundation do you prefer?", choices(["base-ui", "radix-ui"], { "base-ui": "Base UI", "radix-ui": "Radix UI" }), state.uiFoundation.value)).state;
   while (true) {
-    const presetInput = await prompter.text("shadcnPreset", "shadcn preset code, init URL, or init command", state.shadcnPreset.value.code);
+    const presetInput = await prompter.text("shadcnPreset", "Paste a shadcn preset code, URL, or init command", state.shadcnPreset.value.code);
     try {
       const imported = parseShadcnPresetInput(presetInput);
       state = setV3UserDecision(state, "shadcnPreset", imported.preset as ShadcnPreset).state;
@@ -99,8 +98,9 @@ export async function collectInteractiveWizardState(prompter: InteractivePrompte
   }
   state.stage = "infrastructure";
 
-  state = setV3UserDecision(state, "hosting", await prompter.select<HostingChoice>("hosting", "Hosting", choices(["vercel", "cloudflare", "azure", "aws", "gcp", "docker"], { vercel: "Vercel", cloudflare: "Cloudflare", azure: "Azure", aws: "AWS", gcp: "GCP", docker: "Docker" }), state.hosting.value)).state;
-  state = setV3UserDecision(state, "codeHost", await prompter.select<CodeHost>("codeHost", "Code host", choices(["github", "gitlab", "azure-devops", "undecided"], { github: "GitHub", gitlab: "GitLab", "azure-devops": "Azure DevOps", undecided: "Undecided" }), state.codeHost.value)).state;
+  prompter.section?.("Infrastructure");
+  state = setV3UserDecision(state, "hosting", await prompter.select<HostingChoice>("hosting", "Where will this app run?", choices(["vercel", "cloudflare", "azure", "aws", "gcp", "docker"], { vercel: "Vercel", cloudflare: "Cloudflare", azure: "Azure", aws: "AWS", gcp: "GCP", docker: "Docker" }), state.hosting.value)).state;
+  state = setV3UserDecision(state, "codeHost", await prompter.select<CodeHost>("codeHost", "Where will the repository live?", choices(["github", "gitlab", "azure-devops", "undecided"], { github: "GitHub", gitlab: "GitLab", "azure-devops": "Azure DevOps", undecided: "Undecided" }), state.codeHost.value)).state;
 
   state = setV3UserDecision(state, "authentication", await prompter.select<"none" | "better-auth">("authentication", "Authentication", choices(["none", "better-auth"], { none: "No authentication", "better-auth": "Better Auth" }), state.authentication.value)).state;
   if (state.authentication.value === "better-auth") {
@@ -127,6 +127,7 @@ export async function collectInteractiveWizardState(prompter: InteractivePrompte
   state = setV3UserDecision(state, "aiProviders", await prompter.multiSelect<AiProvider>("aiProviders", "AI providers", choices(["openai", "anthropic", "google", "azure-openai", "bedrock", "vertex", "vercel-ai-gateway"], { openai: "OpenAI", anthropic: "Anthropic", google: "Google", "azure-openai": "Azure OpenAI", bedrock: "Amazon Bedrock", vertex: "Google Vertex", "vercel-ai-gateway": "Vercel AI Gateway" }), state.aiProviders.value)).state;
 
   state.stage = "quality";
+  prompter.section?.("Quality & delivery");
   state = setV3UserDecision(state, "ciEnabled", await prompter.confirm("ciEnabled", "Include continuous integration?", state.ciEnabled.value)).state;
   state = setV3UserDecision(state, "vitest", await prompter.confirm("vitest", "Include Vitest?", state.vitest.value)).state;
   state = setV3UserDecision(state, "playwright", await prompter.confirm("playwright", "Include Playwright?", state.playwright.value)).state;
@@ -151,24 +152,41 @@ export class TerminalPrompter implements InteractivePrompter {
   }
 
   note(message: string): void {
-    this.#output.write(`  ${message}\n`);
+    this.#output.write(`│  ${message}\n`);
+  }
+
+  section(title: string): void {
+    this.#output.write(`\n┌  ${title.toUpperCase()}\n`);
+  }
+
+  #resolved(value: string): void {
+    this.#output.write(`◆  ${value}\n`);
   }
 
   async text(_id: string, message: string, defaultValue: string): Promise<string> {
+    this.#output.write(`◇  ${message}\n`);
     const suffix = defaultValue ? ` [${defaultValue}]` : "";
-    const answer = await this.#readline.question(`? ${message}${suffix}: `);
-    return answer.trim() || defaultValue;
+    const answer = await this.#readline.question(`└  Enter a value${suffix} › `);
+    const value = answer.trim() || defaultValue;
+    this.#resolved(value);
+    return value;
   }
 
   async select<T extends string>(_id: string, message: string, options: readonly PromptChoice<T>[], defaultValue: T): Promise<T> {
     const defaultIndex = Math.max(0, options.findIndex((option) => option.value === defaultValue));
     while (true) {
-      this.#output.write(`\n? ${message}\n`);
-      options.forEach((option, index) => this.#output.write(`  ${index + 1}) ${option.label}${index === defaultIndex ? " (recommended)" : ""}\n`));
-      const answer = (await this.#readline.question(`Choose [${defaultIndex + 1}]: `)).trim();
-      if (!answer) return options[defaultIndex].value;
+      this.#output.write(`\n◇  ${message}\n`);
+      options.forEach((option, index) => this.#output.write(`│  ${index === defaultIndex ? "●" : "○"} ${index + 1}. ${option.label}${index === defaultIndex ? " (recommended)" : ""}\n`));
+      const answer = (await this.#readline.question(`└  Select [${defaultIndex + 1}] › `)).trim();
+      if (!answer) {
+        this.#resolved(options[defaultIndex].label);
+        return options[defaultIndex].value;
+      }
       const index = Number(answer) - 1;
-      if (Number.isInteger(index) && options[index]) return options[index].value;
+      if (Number.isInteger(index) && options[index]) {
+        this.#resolved(options[index].label);
+        return options[index].value;
+      }
       this.note(`Enter a number from 1 to ${options.length}.`);
     }
   }
@@ -176,24 +194,54 @@ export class TerminalPrompter implements InteractivePrompter {
   async multiSelect<T extends string>(_id: string, message: string, options: readonly PromptChoice<T>[], defaultValues: readonly T[]): Promise<T[]> {
     const defaultIndexes = defaultValues.map((value) => options.findIndex((option) => option.value === value)).filter((index) => index >= 0);
     while (true) {
-      this.#output.write(`\n? ${message} (comma-separated)\n`);
-      options.forEach((option, index) => this.#output.write(`  ${index + 1}) ${option.label}${defaultIndexes.includes(index) ? " (selected)" : ""}\n`));
+      this.#output.write(`\n◇  ${message}\n`);
+      options.forEach((option, index) => this.#output.write(`│  ${defaultIndexes.includes(index) ? "◼" : "◻"} ${index + 1}. ${option.label}${defaultIndexes.includes(index) ? " (selected)" : ""}\n`));
       const fallback = defaultIndexes.map((index) => index + 1).join(",");
-      const answer = (await this.#readline.question(`Choose${fallback ? ` [${fallback}]` : " (Enter for none)"}: `)).trim();
-      if (!answer) return defaultIndexes.map((index) => options[index].value);
+      const answer = (await this.#readline.question(`└  Select comma-separated values${fallback ? ` [${fallback}]` : " (Enter for none)"} › `)).trim();
+      if (!answer) {
+        const selected = defaultIndexes.map((index) => options[index]);
+        this.#resolved(selected.length ? selected.map((option) => option.label).join(", ") : "None");
+        return selected.map((option) => option.value);
+      }
       const indexes = [...new Set(answer.split(",").map((item) => Number(item.trim()) - 1))];
-      if (indexes.every((index) => Number.isInteger(index) && options[index])) return indexes.map((index) => options[index].value);
+      if (indexes.every((index) => Number.isInteger(index) && options[index])) {
+        const selected = indexes.map((index) => options[index]);
+        this.#resolved(selected.map((option) => option.label).join(", "));
+        return selected.map((option) => option.value);
+      }
       this.note(`Enter comma-separated numbers from 1 to ${options.length}.`);
     }
   }
 
   async confirm(_id: string, message: string, defaultValue: boolean): Promise<boolean> {
     while (true) {
-      const answer = (await this.#readline.question(`? ${message} ${defaultValue ? "[Y/n]" : "[y/N]"}: `)).trim().toLowerCase();
-      if (!answer) return defaultValue;
-      if (["y", "yes"].includes(answer)) return true;
-      if (["n", "no"].includes(answer)) return false;
+      const answer = (await this.#readline.question(`◇  ${message} ${defaultValue ? "[Y/n]" : "[y/N]"} › `)).trim().toLowerCase();
+      if (!answer) {
+        this.#resolved(defaultValue ? "Yes" : "No");
+        return defaultValue;
+      }
+      if (["y", "yes"].includes(answer)) {
+        this.#resolved("Yes");
+        return true;
+      }
+      if (["n", "no"].includes(answer)) {
+        this.#resolved("No");
+        return false;
+      }
       this.note("Enter yes or no.");
     }
   }
+}
+
+export function renderSplash(version = "0.5.0"): string {
+  return [
+    "",
+    "╭──────────────────────────────────────────────────╮",
+    `│  ✦  START  v${version.padEnd(37)}│`,
+    "│                                                  │",
+    "│     Build an agent-ready Next.js workspace.      │",
+    "│     Answer once · review the plan · verify it.   │",
+    "╰──────────────────────────────────────────────────╯",
+    "",
+  ].join("\n");
 }
