@@ -273,7 +273,7 @@ test("v3 plan is deterministic, starts with official shadcn, and exposes durable
   assert.deepEqual(buildExecutionPlan(config), plan);
   assert.equal(plan.steps[0]?.id, "official-shadcn-init");
   assert.equal(plan.steps[0]?.owner, "official");
-  assert.match(plan.steps[0]?.command?.command ?? "", /shadcn@latest init/);
+  assert.match(plan.steps[0]?.command?.command ?? "", /shadcn@latest init --template next --base base --preset b0 --yes/);
   assert.deepEqual(plan.steps[0]?.command?.affectedPaths, ["app", "components", "components.json", "package.json"]);
   assert.equal(plan.steps.some((step) => step.id === "install-project-skills"), true);
   assert.equal(plan.environment.some((entry) => entry.name === "DATABASE_URL"), true);
