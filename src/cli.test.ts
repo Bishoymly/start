@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -82,6 +82,11 @@ test("CLI fails safely on a Start-owned conflict unless overwrite is explicit", 
   const args = ["app", "--blueprint", tokenFor(), "--skip-install"];
   const initial = run(root, args, { skipExecution: true });
   assert.equal(initial.status, 0, initial.stderr);
+  // The no-network seam deliberately does not synthesize official shadcn output.
+  // Supply the upstream command's postcondition so this rerun reaches the Start-owned conflict.
+  mkdirSync(join(root, "app", "app"));
+  mkdirSync(join(root, "app", "components"));
+  writeFileSync(join(root, "app", "components.json"), "{}\n", "utf8");
   const agents = join(root, "app", "AGENTS.md");
   writeFileSync(agents, "user-owned conflict\n", "utf8");
   const conflict = run(root, args, { skipExecution: true });

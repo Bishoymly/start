@@ -19,6 +19,8 @@ import {
   renderPlanMarkdown,
   renderReadinessReport,
   renderStartOwnedFiles,
+  createStartToolingManifest,
+  type StartToolingManifest,
 } from "./render.js";
 import { collectInteractiveWizardState, TerminalPrompter } from "./interactive.js";
 
@@ -118,14 +120,18 @@ async function conflictDecision(step: ExecutionPlanStep, overwrite: boolean, int
   }
 }
 
-function runCommand(command: string, cwd: string, label: string): void {
+function runCommand(command: string, cwd: string, label: string, allowFailure = false): boolean {
   if (process.env.START_TEST_SKIP_EXECUTION === "1") {
     console.log(`Test seam: skipped ${label}.`);
-    return;
+    return true;
   }
   console.log(`\n${label}: ${command}`);
   const result = spawnSync(command, { cwd, shell: true, stdio: "inherit" });
-  if (result.status !== 0) fail(`${label} failed. The workspace was preserved for inspection and retry.`);
+  if (result.status !== 0) {
+    if (allowFailure) return false;
+    fail(`${label} failed. The workspace was preserved for inspection and retry.`);
+  }
+  return true;
 }
 
 function plannedVersions(target: string): Record<string, string> {
@@ -161,11 +167,57 @@ async function applyFiles(target: string, step: ExecutionPlanStep, files: Record
   outcome.executed.push(step.id);
 }
 
-function scopedStartFiles(files: Record<string, string>, id: string): Record<string, string> {
-  return Object.fromEntries(Object.entries(files).filter(([path]) => {
-    if (path.startsWith(`.start/${id}/`)) return true;
-    return id === "quality" && !path.startsWith(".start/");
-  }));
+function scopedStartFiles(files: Record<string, string>, id: string, agentFiles: Record<string, string>): Record<string, string> {
+  const isCi = (path: string) => [".github/workflows/verify.yml", ".gitlab-ci.yml", "azure-pipelines.yml"].includes(path);
+  const isCapability = (path: string) => path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/") || path === "lib/auth.ts" || path === "lib/auth-session.ts" || path.startsWith("lib/storage/") || path.startsWith("lib/ai/") || path === "instrumentation.ts" || path.startsWith("sentry.");
+  const belongsTo = (path: string) => {
+    if (id === "ci") return isCi(path);
+    if (id === "database") return path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/");
+    if (id === "authentication") return path === "lib/auth.ts" || path === "lib/auth-session.ts";
+    if (id === "storage") return path.startsWith("lib/storage/");
+    if (id.startsWith("ai-")) return path.startsWith("lib/ai/");
+    if (id === "opentelemetry") return path === "instrumentation.ts";
+    if (id === "sentry") return path.startsWith("sentry.");
+    return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && path !== "start-tooling.json";
+  };
+  return Object.fromEntries(Object.entries(files).filter(([path]) => belongsTo(path)));
+}
+
+function toolingState(target: string, manifest: StartToolingManifest): FileState {
+  const packageFile = resolve(target, "package.json");
+  if (!existsSync(packageFile)) return "absent";
+  let pkg: Record<string, unknown>;
+  try { pkg = JSON.parse(readFileSync(packageFile, "utf8")) as Record<string, unknown>; } catch { return "different"; }
+  const entries = (["scripts", "dependencies", "devDependencies"] as const).flatMap((section) => Object.entries(manifest[section] ?? {}).map(([name, version]) => [section, name, version] as const));
+  const matched = entries.filter(([section, name, version]) => (pkg[section] as Record<string, string> | undefined)?.[name] === version).length;
+  if (matched === entries.length) return "satisfied";
+  if (matched === 0 && entries.every(([section, name]) => (pkg[section] as Record<string, string> | undefined)?.[name] === undefined)) return "absent";
+  return "different";
+}
+
+function applyToolingManifest(target: string, manifest: StartToolingManifest): void {
+  const packageFile = resolve(target, "package.json");
+  let pkg: Record<string, unknown> = {};
+  if (existsSync(packageFile)) pkg = JSON.parse(readFileSync(packageFile, "utf8")) as Record<string, unknown>;
+  for (const section of ["scripts", "dependencies", "devDependencies"] as const) {
+    const values = manifest[section];
+    if (!values || Object.keys(values).length === 0) continue;
+    pkg[section] = { ...(pkg[section] as Record<string, string> | undefined), ...values };
+  }
+  writeFiles(target, { "package.json": `${JSON.stringify(pkg, null, 2)}\n` });
+}
+
+async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, overwrite: boolean, interactive: boolean, outcome: Outcome): Promise<void> {
+  const fileState = filesState(target, files);
+  const manifestState = toolingState(target, manifest);
+  if (fileState === "satisfied" && manifestState === "satisfied") return void outcome.skipped.push(step.id);
+  if (fileState === "different" || manifestState === "different") {
+    outcome.conflicts.push(step.id);
+    if (await conflictDecision(step, overwrite, interactive) === "preserve") return void outcome.skipped.push(step.id);
+  }
+  writeFiles(target, files);
+  applyToolingManifest(target, manifest);
+  outcome.executed.push(step.id);
 }
 
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
@@ -174,6 +226,7 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
   mkdirSync(target, { recursive: true });
   const startFiles = renderStartOwnedFiles(config, plan);
   const agentFiles = renderAgentEntryPoints(config);
+  const toolingManifest = createStartToolingManifest(config);
 
   for (const step of plan.steps) {
     if (step.id === "official-shadcn-init") {
@@ -199,8 +252,9 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
     }
     if (step.id === "start-quality" || step.id === "start-ci" || step.id.startsWith("capability-")) {
       const id = step.id === "start-quality" ? "quality" : step.id === "start-ci" ? "ci" : step.id.slice("capability-".length);
-      const scoped = scopedStartFiles(startFiles, id);
-      if (Object.keys(scoped).length) await applyFiles(target, step, scoped, options.overwrite, interactive, outcome);
+      const scoped = scopedStartFiles(startFiles, id, agentFiles);
+      if (step.id === "start-quality") await applyQuality(target, step, scoped, toolingManifest, options.overwrite, interactive, outcome);
+      else if (Object.keys(scoped).length) await applyFiles(target, step, scoped, options.overwrite, interactive, outcome);
       else outcome.skipped.push(step.id);
       continue;
     }
@@ -227,13 +281,15 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
   const verification = plan.steps.find((step) => step.id === "verify-readiness");
   if (!verification) fail("The execution plan is missing readiness verification.");
   let verificationStatus: "pending" | "passed" | "failed" = "pending";
+  let verificationFailed = false;
   if (!options.skipInstall && process.env.START_TEST_SKIP_EXECUTION !== "1") {
-    runCommand(plan.verification.command, target, verification.title);
-    verificationStatus = "passed";
-    outcome.executed.push(verification.id);
+    verificationFailed = !runCommand(plan.verification.command, target, verification.title, true);
+    verificationStatus = verificationFailed ? "failed" : "passed";
+    outcome[verificationFailed ? "skipped" : "executed"].push(verification.id);
   } else outcome.skipped.push(verification.id);
 
   writeFiles(target, { "START_READINESS.md": renderReadinessReport({ plan, executed: outcome.executed, skipped: outcome.skipped, conflicts: outcome.conflicts, resolvedVersions: plannedVersions(target), verification: { command: plan.verification.command, status: verificationStatus } }) });
+  if (verificationFailed) fail(`${verification.title} failed. START_READINESS.md records the failed verification; the workspace was preserved for inspection and retry.`);
   initializeGit(target);
   return outcome;
 }
