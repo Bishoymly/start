@@ -1,6 +1,6 @@
 {
   "name": "@bishoymly/start",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "description": "Create a verified v3 agent-ready Next.js workspace from a portable blueprint.",
   "keywords": [
     "nextjs",

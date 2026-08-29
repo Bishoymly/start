@@ -176,7 +176,7 @@ function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   }
   if (config.testing.includes("vitest")) {
     files["vitest.config.ts"] = "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: { environment: \"node\", include: [\"tests/**/*.test.ts\"] } });\n";
-    files["tests/readiness.test.ts"] = "import { existsSync } from \"node:fs\";\nimport { expect, test } from \"vitest\";\n\ntest(\"Start readiness documents exist\", () => {\n  expect(existsSync(\"AGENTS.md\")).toBe(true);\n  expect(existsSync(\"START_READINESS.md\")).toBe(true);\n});\n";
+    files["tests/readiness.test.ts"] = "import { existsSync } from \"node:fs\";\nimport { expect, test } from \"vitest\";\n\ntest(\"Start project contracts exist before verification\", () => {\n  expect(existsSync(\"AGENTS.md\")).toBe(true);\n  expect(existsSync(\"START_PLAN.md\")).toBe(true);\n});\n";
   }
   if (config.testing.includes("playwright")) {
     files["playwright.config.ts"] = `import { defineConfig, devices } from \"@playwright/test\";\nexport default defineConfig({ testDir: \"./tests/e2e\", webServer: { command: \"${packageLauncher(config, "next dev")} --port 3107\", url: \"http://127.0.0.1:3107\", reuseExistingServer: !process.env.CI }, use: { baseURL: \"http://127.0.0.1:3107\", trace: \"on-first-retry\" }, projects: [{ name: \"chromium\", use: { ...devices[\"Desktop Chrome\"] } }] });\n`;

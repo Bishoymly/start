@@ -2,6 +2,10 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.6] - 2026-08-29
+
+- Fixed the generated Vitest contract so it checks files that exist before readiness verification runs.
+
 ## [0.6.5] - 2026-08-29
 
 - Allow the initial pnpm install to update the lockfile in CI after Start adds its selected tooling.
@@ -43,3 +47,4 @@ All notable changes to Start are documented here.
 [0.6.3]: https://github.com/bishoymly/start/releases/tag/v0.6.3
 [0.6.4]: https://github.com/bishoymly/start/releases/tag/v0.6.4
 [0.6.5]: https://github.com/bishoymly/start/releases/tag/v0.6.5
+[0.6.6]: https://github.com/bishoymly/start/releases/tag/v0.6.6
