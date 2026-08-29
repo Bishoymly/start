@@ -2,6 +2,13 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.9] - 2026-08-29
+
+- Lead the project README with the interactive `npx` workflow and link the web wizard for portable blueprints.
+- Show the three consolidated project-skill install commands in plan review, install each for every selected agent, and use `--override` when adding all shadcn components.
+- Expand generated README and agent instructions with environment setup, build/test/Playwright commands, Next.js guidance, project structure, verification, shadcn blocks, and a clear distinction between the completed generation record and future work.
+- Commit the verified generated baseline automatically in newly initialized Git repositories.
+
 ## [0.6.8] - 2026-08-29
 
 - Install every available shadcn UI component through the official CLI and keep its upstream component source out of application linting.
@@ -57,6 +64,7 @@ All notable changes to Start are documented here.
 - Added Playwright browser installation and a generated portable `verify` contract.
 
 [0.4.0]: https://github.com/bishoymly/start/releases/tag/v0.4.0
+[0.6.9]: https://github.com/bishoymly/start/releases/tag/v0.6.9
 [0.6.8]: https://github.com/bishoymly/start/releases/tag/v0.6.8
 [0.6.7]: https://github.com/bishoymly/start/releases/tag/v0.6.7
 [0.6.1]: https://github.com/bishoymly/start/releases/tag/v0.6.1

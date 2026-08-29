@@ -1031,30 +1031,40 @@ export function buildExecutionPlan(config: StarterConfigV3): ExecutionPlanV3 {
     codex: ".agents/skills", "claude-code": ".claude/skills", cursor: ".cursor/skills", "github-copilot": ".github/skills",
     "gemini-cli": ".gemini/skills", opencode: ".opencode/skills", windsurf: ".windsurf/skills", "grok-build": ".grok/skills",
   };
-  // The Skills CLI's --agent switch makes ownership explicit: a selected agent
-  // receives its native project-local skill directory, not a generic copy.
-  const skills = agentSet(config).flatMap((agent) => [
-    { id: `design-taste-frontend-${agent}`, source: "leonxlnx/taste-skill", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/design-taste-frontend/SKILL.md`], installCommand: `${launcher} skills add leonxlnx/taste-skill --skill design-taste-frontend --agent ${agent} --yes` },
-    { id: `next-dev-loop-${agent}`, source: "vercel/next.js", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/next-dev-loop/SKILL.md`], installCommand: `${launcher} skills add vercel/next.js --skill next-dev-loop --agent ${agent} --yes` },
-    { id: `agent-browser-${agent}`, source: "vercel-labs/agent-browser", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/agent-browser/SKILL.md`], installCommand: `${launcher} skills add vercel-labs/agent-browser --skill agent-browser --agent ${agent} --yes` },
-  ] satisfies SkillContract[]);
+  // Install each shared skill once for every selected agent. The Skills CLI
+  // supports multiple --agent values, which keeps review and execution to
+  // three clear commands rather than repeating the same command per agent.
+  const selectedAgents = agentSet(config);
+  const skill = (id: string, source: string, name: string): SkillContract => ({
+    id,
+    source,
+    agents: selectedAgents,
+    projectScope: true,
+    expectedPaths: selectedAgents.map((agent) => `${skillRoot[agent]}/${name}/SKILL.md`),
+    installCommand: `${launcher} skills add ${source} --skill ${name} --agent ${selectedAgents.join(" ")} --yes`,
+  });
+  const skills = [
+    skill("design-taste-frontend", "leonxlnx/taste-skill", "design-taste-frontend"),
+    skill("next-dev-loop", "vercel/next.js", "next-dev-loop"),
+    skill("agent-browser", "vercel-labs/agent-browser", "agent-browser"),
+  ];
   const capabilities = capabilitiesForV3(config);
   const steps: ExecutionPlanStep[] = [
     { id: "official-shadcn-init", kind: "official-command", owner: "official", title: "Initialize the official shadcn template", description: "Runs the documented upstream CLI non-interactively and preserves every file it creates.", command: { command: `${launcher} shadcn@latest init --name ${config.projectName} --template next --base ${base} --preset ${config.shadcnPreset.code} --no-monorepo --yes`, postcondition: "absent", conflictPolicy: "prompt", affectedPaths: ["app", "components", "components.json", "package.json"] } },
     { id: "record-start-state", kind: "start-configuration", owner: "start", title: "Record Start v3 template state", description: "Records the selected official template contract so only a prior Start run can be resumed.", operations: ["write .start/v3-state.json"] },
-    { id: "install-shadcn-components", kind: "official-command", owner: "official", title: "Install all shadcn UI components", description: "Uses the official shadcn CLI to add every available component from the selected registry.", command: { command: `${launcher} shadcn@latest add --all --yes`, postcondition: "absent", conflictPolicy: "preserve", affectedPaths: [".start/v3-shadcn-components.json"] } },
+    { id: "install-shadcn-components", kind: "official-command", owner: "official", title: "Install all shadcn UI components", description: "Uses the official shadcn CLI to add every available component from the selected registry, replacing starter component files when required.", command: { command: `${launcher} shadcn@latest add --all --yes --override`, postcondition: "absent", conflictPolicy: "preserve", affectedPaths: [".start/v3-shadcn-components.json"] } },
     { id: "start-project-contracts", kind: "start-configuration", owner: "start", title: "Write project contracts", description: "Writes documentation, environment contract, tooling manifest, and readiness guidance owned by Start.", operations: ["write docs/START_PLAN.md", "write docs/START_ENVIRONMENT.md", "write docs/START_READINESS.md", "write .env.example", "write start-tooling.json"] },
     { id: "start-agent-instructions", kind: "start-configuration", owner: "start", title: "Add durable agent instructions", description: "Adds AGENTS.md and selected native agent entry points; instructions require waiting for PRD or requirements.", operations: ["write AGENTS.md", "write selected native agent entry points"] },
     { id: "start-quality", kind: "start-configuration", owner: "start", title: "Configure quality and browser verification", description: "Adds strict TypeScript, selected formatter/linter, Vitest, Playwright, browser guidance, and one verify command without changing official UI output.", operations: ["configure TypeScript", "configure formatter and linter", "configure tests", "configure verify command"] },
     ...(config.ciEnabled ? [{ id: "start-ci", kind: "start-configuration" as const, owner: "start" as const, title: "Configure CI", description: `Adds ${config.ci} to run the same verify command used locally.`, operations: ["write CI workflow"] }] : []),
     ...capabilities.map((capability) => ({ id: `capability-${capability.id.replaceAll(":", "-")}`, kind: "start-configuration" as const, owner: "start" as const, title: `Configure ${capability.id}`, description: capability.description, operations: ["add dependency and framework configuration", "document environment contract"], capabilities: [capability.id] })),
-    { id: "install-project-skills", kind: "skill-install", owner: "official", title: "Install selected project skills", description: "Uses the official Skills CLI at project scope and verifies installer-produced files and provenance.", operations: skills.map((skill) => skill.installCommand) },
+    { id: "install-project-skills", kind: "skill-install", owner: "official", title: "Install selected project skills", description: "Uses three project-scoped Skills CLI commands—one per shared skill—for every selected agent and verifies installer-produced files.", operations: skills.map((skill) => skill.installCommand) },
     { id: "install-dependencies", kind: "official-command", owner: "user", title: "Install project dependencies", description: "Installs the exact dependency graph after Start-owned manifests are in place.", command: { command: { npm: "npm install", pnpm: "pnpm install --no-frozen-lockfile", yarn: "yarn install", bun: "bun install" }[config.packageManager], postcondition: "absent", conflictPolicy: "preserve", affectedPaths: ["node_modules"] } },
     { id: "format-generated-source", kind: "official-command", owner: "start", title: "Format generated source", description: "Formats the fresh upstream starter with the selected formatter before readiness verification.", command: { command: `${config.packageManager} run format`, postcondition: "absent", conflictPolicy: "preserve", affectedPaths: [] } },
     ...(config.testing.includes("playwright") ? [{ id: "install-browser", kind: "official-command" as const, owner: "official" as const, title: "Install Playwright Chromium", description: "Installs the browser required by the selected browser verification suite.", command: { command: `${packageLauncherForPlan(config)} playwright install chromium`, postcondition: "absent" as const, conflictPolicy: "preserve" as const, affectedPaths: [] } }] : []),
     { id: "verify-readiness", kind: "verification", owner: "start", title: "Verify repository readiness", description: "Runs formatting, linting, typecheck, unit tests, Playwright, production build, and records a readiness report.", command: { command: `${config.packageManager} run verify`, postcondition: "absent", conflictPolicy: "preserve", affectedPaths: ["docs/START_READINESS.md"] } },
     { id: "record-readiness", kind: "start-configuration", owner: "start", title: "Write readiness report", description: "Records resolved installed versions, warnings, verification, and whether readiness is actually complete.", operations: ["write docs/START_READINESS.md"] },
-    { id: "initialize-git", kind: "official-command", owner: "user", title: "Initialize Git repository", description: "Initializes main when the target is not already inside a Git worktree.", command: { command: "git init --initial-branch=main", postcondition: "absent", conflictPolicy: "preserve", affectedPaths: [".git"] } },
+    { id: "initialize-git", kind: "official-command", owner: "start", title: "Commit the generated baseline", description: "For a newly initialized repository, creates main and commits the verified generated workspace. Existing repositories are left untouched.", command: { command: 'git init --initial-branch=main && git add --all . && git commit -m "chore: initialize with Start"', postcondition: "absent", conflictPolicy: "preserve", affectedPaths: [".git"] } },
   ];
   return { version: 3, blueprint: encodeV3Blueprint(config), steps, skills, environment: environmentForV3(config), capabilities, verification: { command: `${config.packageManager} run verify`, checks: ["format", "lint", "typecheck", "unit tests", "Playwright", "production build"], awaitRequirements: true }, warnings: [...validation.warnings, "Repository readiness is complete only after verification succeeds. Await a PRD or requirements before product work."] };
 }

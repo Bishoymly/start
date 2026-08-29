@@ -8,13 +8,21 @@ Start uses the official [shadcn CLI](https://ui.shadcn.com/docs/cli) to create t
 
 ## Quick start
 
-Create a blueprint in the [web builder](https://bishoy.io/start), then inspect the exact plan before it writes files:
+Start the interactive CLI:
+
+```bash
+npx @bishoymly/start@latest
+```
+
+It walks through the workspace choices, shows the exact plan, and only writes files after you approve it.
+
+Prefer a shareable, reviewable blueprint? Create one in the [web wizard](https://bishoy.io/start), then inspect its plan before it writes files:
 
 ```bash
 pnpm dlx @bishoymly/start@latest my-app --blueprint v3.<token> --plan
 ```
 
-Run that reviewed plan:
+Run the reviewed blueprint:
 
 ```bash
 pnpm dlx @bishoymly/start@latest my-app --blueprint v3.<token>

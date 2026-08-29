@@ -181,12 +181,28 @@ function officialState(target: string, command: NonNullable<ExecutionPlanStep["c
   return state.blueprint === blueprint && state.officialCommand === command.command && existing === "satisfied" ? "satisfied" : "different";
 }
 
-function initializeGit(target: string): void {
+function initializeGit(target: string): boolean {
+  if (process.env.START_TEST_SKIP_EXECUTION === "1") {
+    console.log("Test seam: skipped Git initialization and initial commit.");
+    return false;
+  }
   const existing = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: target, encoding: "utf8" });
-  if (existing.status === 0) return console.log(`Using existing Git repository: ${existing.stdout.trim()}`);
+  if (existing.status === 0) {
+    console.log(`Using existing Git repository: ${existing.stdout.trim()}; leaving its history and index untouched.`);
+    return false;
+  }
   const initialized = spawnSync("git", ["init", "--initial-branch=main"], { cwd: target, encoding: "utf8" });
-  if (initialized.status === 0) console.log("Initialized Git repository on main.");
-  else console.warn("Git initialization was skipped. Initialize it later with git init --initial-branch=main.");
+  if (initialized.status !== 0) fail("Git initialization failed. The verified workspace was preserved for inspection.");
+  console.log("Initialized Git repository on main.");
+  return true;
+}
+
+function commitGeneratedBaseline(target: string): void {
+  const staged = spawnSync("git", ["add", "--all", "."], { cwd: target, encoding: "utf8" });
+  if (staged.status !== 0) fail("Staging the generated workspace for its initial Git commit failed.");
+  const committed = spawnSync("git", ["commit", "-m", "chore: initialize with Start"], { cwd: target, encoding: "utf8" });
+  if (committed.status !== 0) fail("Creating the initial Git commit failed. Configure Git author identity if needed, then commit the generated workspace.");
+  console.log("Created initial Git commit: chore: initialize with Start.");
 }
 
 async function applyFiles(target: string, step: ExecutionPlanStep, files: Record<string, string>, outcome: Outcome): Promise<void> {
@@ -416,8 +432,10 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
   if (verificationFailed) fail(`${verification.title} failed. docs/START_READINESS.md records the failed verification; the workspace was preserved for inspection and retry.`);
   const gitStep = plan.steps.find((step) => step.id === "initialize-git");
   if (!gitStep) fail("The execution plan is missing Git initialization.");
-  initializeGit(target);
-  outcome.executed.push(gitStep.id);
+  if (initializeGit(target)) {
+    commitGeneratedBaseline(target);
+    outcome.executed.push(gitStep.id);
+  } else outcome.skipped.push(gitStep.id);
   return outcome;
 }
 

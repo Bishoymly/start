@@ -92,6 +92,7 @@ test("CLI executes the v3 plan through the no-network test seam and reports read
   assert.match(result.stdout, /━━ 01\/01  Initialize the official shadcn template/);
   assert.match(result.stdout, /↳ pnpm dlx shadcn@latest init/);
   assert.match(result.stdout, /Test seam: skipped Initialize the official shadcn template/);
+  assert.match(result.stdout, /Test seam: skipped Git initialization and initial commit/);
   assert.match(result.stdout, /Skipped:.*install-project-skills/);
 });
 

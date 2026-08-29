@@ -19,11 +19,19 @@ test("durable baseline preserves official UI ownership and has no service leakag
 
   for (const path of forbiddenProductPaths) assert.equal(files[path], undefined, `${path} must remain official or requirement-owned`);
   assert.equal(files["AGENTS.md"].includes("Think before coding"), true);
+  assert.equal(files["AGENTS.md"].includes("BEGIN:nextjs-agent-rules"), true);
+  assert.equal(files["AGENTS.md"].includes("Project structure"), true);
+  assert.equal(files["AGENTS.md"].includes("## Verification"), true);
+  assert.equal(files["AGENTS.md"].includes("shadcn block"), true);
   assert.equal(files["docs/START_READINESS.md"].includes("Status: pending"), true);
   assert.equal(files["docs/DEVELOPMENT.md"].includes("Full local gate"), true);
   assert.equal(files["docs/AGENT_WORKFLOWS.md"].includes(".agents/commands/implement.md"), true);
   assert.equal(files["docs/HOOKS.md"].includes("Husky"), true);
   assert.equal(files["README.md"].includes("Quick start"), true);
+  assert.equal(files["README.md"].includes(".env.example"), true);
+  assert.equal(files["README.md"].includes("pnpm install"), true);
+  assert.equal(files["README.md"].includes("Production build"), true);
+  assert.equal(files["README.md"].includes("Playwright tests"), true);
   assert.equal(files[".github/workflows/verify.yml"].includes(plan.verification.command), true);
   assert.equal(files["start-tooling.json"] !== undefined, true);
   assert.equal(files["tests/readiness.test.ts"].includes('from "vitest"'), true);
@@ -96,6 +104,9 @@ test("plan and readiness report expose ordered ownership and execution evidence"
   });
 
   assert.match(markdown, /1\. Initialize the official shadcn template/);
+  assert.match(markdown, /Historical generation record/);
+  assert.match(markdown, /Skill install commands/);
+  assert.match(markdown, /--agent codex --yes/);
   assert.match(markdown, /Await a PRD/);
   assert.match(report, /official-shadcn-init/);
   assert.match(report, /Status: passed/);

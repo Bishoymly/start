@@ -33,17 +33,17 @@ test("v3 blueprints and selected agent skills are deterministic", () => {
   assert.deepEqual(decodeV3Blueprint(token), config);
   assert.match(buildV3StarterCommand(config), /--blueprint v3\./);
   const plan = buildExecutionPlan(config);
-  assert.equal(plan.skills.some((skill) => skill.installCommand.includes("--agent codex") && skill.expectedPaths[0]?.startsWith(".agents/skills/")), true);
-  assert.equal(plan.skills.some((skill) => skill.installCommand.includes("--agent claude-code") && skill.expectedPaths[0]?.startsWith(".claude/skills/")), true);
-  assert.equal(plan.skills.some((skill) => skill.source === "vercel/next.js" && skill.id === "next-dev-loop-codex"), true);
-  assert.equal(plan.skills.some((skill) => skill.source === "vercel-labs/agent-browser" && skill.id === "agent-browser-codex"), true);
+  assert.equal(plan.skills.some((skill) => skill.installCommand.includes("--agent codex claude-code") && skill.expectedPaths.some((path) => path.startsWith(".agents/skills/")) && skill.expectedPaths.some((path) => path.startsWith(".claude/skills/"))), true);
+  assert.equal(plan.skills.some((skill) => skill.source === "vercel/next.js" && skill.id === "next-dev-loop"), true);
+  assert.equal(plan.skills.some((skill) => skill.source === "vercel-labs/agent-browser" && skill.id === "agent-browser"), true);
   assert.equal(plan.skills.some((skill) => skill.id.includes("browser-verification")), false);
   assert.equal(plan.steps.some((step) => step.id === "install-dependencies"), true);
-  assert.match(plan.steps.find((step) => step.id === "install-shadcn-components")?.command?.command ?? "", /shadcn@latest add --all --yes/);
+  assert.match(plan.steps.find((step) => step.id === "install-shadcn-components")?.command?.command ?? "", /shadcn@latest add --all --yes --override/);
   assert.equal(plan.steps.find((step) => step.id === "install-dependencies")?.command?.command, "pnpm install --no-frozen-lockfile");
   assert.equal(plan.steps.some((step) => step.id === "install-browser"), true);
   assert.equal(plan.steps.some((step) => step.id === "record-readiness"), true);
   assert.equal(plan.steps.some((step) => step.id === "initialize-git"), true);
+  assert.match(plan.steps.find((step) => step.id === "initialize-git")?.command?.command ?? "", /git commit -m "chore: initialize with Start"/);
 });
 
 test("project name is the app folder across state, blueprints, and commands", () => {

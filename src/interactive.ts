@@ -273,7 +273,10 @@ export function renderSplash(version = "0.6.8"): string {
 export function renderPlanPreview(plan: ExecutionPlanV3, useColor = true): string {
   const steps = plan.steps.map((step, index) => {
     const command = step.command ? `\n     ${muted("$ ")}${yellow(step.command.command)}` : "";
-    return `  ${cyan(`${String(index + 1).padStart(2, "0")} ›`)} ${bold(step.title)}${command}`;
+    const skillCommands = step.id === "install-project-skills"
+      ? plan.skills.map((skill) => `\n     ${muted("$ ")}${yellow(skill.installCommand)}`).join("")
+      : "";
+    return `  ${cyan(`${String(index + 1).padStart(2, "0")} ›`)} ${bold(step.title)}${command}${skillCommands}`;
   });
   const warnings = plan.warnings.length ? `\n\n  ${yellow("!")} ${plan.warnings.map((warning) => muted(warning)).join(`\n  ${yellow("!")} `)}` : "";
   const preview = [

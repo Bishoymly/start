@@ -33,6 +33,8 @@ test("terminal review is a compact colored command list, not Markdown", () => {
   assert.match(plain, /◆ REVIEW/);
   assert.match(plain, /01 › Initialize the official shadcn template/);
   assert.match(plain, /\$ pnpm dlx shadcn@latest init/);
+  assert.match(plain, /Install selected project skills/);
+  assert.match(plain, /\$ pnpm dlx skills add leonxlnx\/taste-skill/);
   assert.doesNotMatch(plain, /^#|^###|^- ID:/m);
 });
 
