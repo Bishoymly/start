@@ -39,6 +39,7 @@ test("v3 blueprints and selected agent skills are deterministic", () => {
   assert.equal(plan.skills.some((skill) => skill.source === "vercel-labs/agent-browser" && skill.id === "agent-browser-codex"), true);
   assert.equal(plan.skills.some((skill) => skill.id.includes("browser-verification")), false);
   assert.equal(plan.steps.some((step) => step.id === "install-dependencies"), true);
+  assert.equal(plan.steps.find((step) => step.id === "install-dependencies")?.command?.command, "pnpm install --no-frozen-lockfile");
   assert.equal(plan.steps.some((step) => step.id === "install-browser"), true);
   assert.equal(plan.steps.some((step) => step.id === "record-readiness"), true);
   assert.equal(plan.steps.some((step) => step.id === "initialize-git"), true);
