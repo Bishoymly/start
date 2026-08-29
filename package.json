@@ -1,6 +1,6 @@
 {
   "name": "@bishoymly/start",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Create a verified v3 agent-ready Next.js workspace from a portable blueprint.",
   "keywords": [
     "nextjs",
@@ -43,6 +43,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/*.test.js",
+    "test:full-run": "npm run build && START_FULL_RUN=1 node --test dist/live-golden.test.js",
     "prepublishOnly": "npm test"
   },
   "dependencies": {

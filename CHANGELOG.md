@@ -2,6 +2,12 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.4] - 2026-08-29
+
+- Added a required CI full-generation job that creates, verifies, and builds a fresh workspace.
+- Fixed the live blueprint test's app-name mismatch and generated Vitest readiness test.
+- Updated generated Biome configuration for shadcn Tailwind directives.
+
 ## [0.6.3] - 2026-08-29
 
 - Automatically overwrite Start-owned configuration to match the selected blueprint without prompts.
@@ -31,3 +37,4 @@ All notable changes to Start are documented here.
 [0.6.1]: https://github.com/bishoymly/start/releases/tag/v0.6.1
 [0.6.2]: https://github.com/bishoymly/start/releases/tag/v0.6.2
 [0.6.3]: https://github.com/bishoymly/start/releases/tag/v0.6.3
+[0.6.4]: https://github.com/bishoymly/start/releases/tag/v0.6.4

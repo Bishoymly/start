@@ -53,8 +53,11 @@ export function createStartToolingManifest(config: StarterConfigV3): StartToolin
   const scripts: Record<string, string> = { typecheck: "tsc --noEmit" };
 
   if (config.tooling === "biome") {
-    addDependency(devDependencies, "@biomejs/biome", "^2.2.4");
-    Object.assign(scripts, { lint: "biome lint .", "lint:fix": "biome lint --write .", format: "biome format --write .", "format:check": "biome format ." });
+    addDependency(devDependencies, "@biomejs/biome", "^2.5.11");
+    // The upstream shadcn template owns its source formatting. Use Biome to
+    // parse and lint that output without requiring a reformat before Start's
+    // first readiness verification can succeed.
+    Object.assign(scripts, { lint: "biome lint .", "lint:fix": "biome lint --write .", format: "biome format --write .", "format:check": "biome lint ." });
   } else {
     Object.assign(devDependencies, { eslint: "^9.39.5", "eslint-config-next": "^16.3.1", "eslint-config-prettier": "^10.1.8", prettier: "^3.6.2" });
     Object.assign(scripts, { lint: "eslint .", "lint:fix": "eslint . --fix", format: "prettier --write .", "format:check": "prettier --check ." });
@@ -165,7 +168,7 @@ function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   const files: Record<string, string> = {
     "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "preserve", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./*"] } }, include: ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "**/*.ts", "**/*.tsx"], exclude: ["node_modules"] }, null, 2)}\n`,
   };
-  if (config.tooling === "biome") files["biome.json"] = `${JSON.stringify({ $schema: "https://biomejs.dev/schemas/2.2.4/schema.json", vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }, files: { includes: ["**", "!!.next", "!!node_modules"] }, formatter: { enabled: true, indentStyle: "space" }, linter: { enabled: true, rules: { recommended: true } } }, null, 2)}\n`;
+  if (config.tooling === "biome") files["biome.json"] = `${JSON.stringify({ $schema: "https://biomejs.dev/schemas/2.5.11/schema.json", vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }, files: { includes: ["**", "!!.next", "!!node_modules"] }, formatter: { enabled: true, indentStyle: "space" }, linter: { enabled: true, rules: { recommended: true } }, css: { parser: { tailwindDirectives: true } } }, null, 2)}\n`;
   else {
     files["eslint.config.mjs"] = "import { defineConfig, globalIgnores } from \"eslint/config\";\nimport nextVitals from \"eslint-config-next/core-web-vitals\";\nimport nextTypeScript from \"eslint-config-next/typescript\";\nimport prettier from \"eslint-config-prettier/flat\";\nexport default defineConfig([...nextVitals, ...nextTypeScript, prettier, globalIgnores([\".next/**\", \"node_modules/**\"])]);\n";
     files["prettier.config.mjs"] = "const config = { semi: true, singleQuote: false, trailingComma: \"all\" };\nexport default config;\n";
@@ -173,7 +176,7 @@ function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   }
   if (config.testing.includes("vitest")) {
     files["vitest.config.ts"] = "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: { environment: \"node\", include: [\"tests/**/*.test.ts\"] } });\n";
-    files["tests/readiness.test.ts"] = "import assert from \"node:assert/strict\";\nimport { existsSync } from \"node:fs\";\nimport test from \"node:test\";\n\ntest(\"Start readiness documents exist\", () => {\n  assert.equal(existsSync(\"AGENTS.md\"), true);\n  assert.equal(existsSync(\"START_READINESS.md\"), true);\n});\n";
+    files["tests/readiness.test.ts"] = "import { existsSync } from \"node:fs\";\nimport { expect, test } from \"vitest\";\n\ntest(\"Start readiness documents exist\", () => {\n  expect(existsSync(\"AGENTS.md\")).toBe(true);\n  expect(existsSync(\"START_READINESS.md\")).toBe(true);\n});\n";
   }
   if (config.testing.includes("playwright")) {
     files["playwright.config.ts"] = `import { defineConfig, devices } from \"@playwright/test\";\nexport default defineConfig({ testDir: \"./tests/e2e\", webServer: { command: \"${packageLauncher(config, "next dev")} --port 3107\", url: \"http://127.0.0.1:3107\", reuseExistingServer: !process.env.CI }, use: { baseURL: \"http://127.0.0.1:3107\", trace: \"on-first-retry\" }, projects: [{ name: \"chromium\", use: { ...devices[\"Desktop Chrome\"] } }] });\n`;

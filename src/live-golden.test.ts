@@ -8,12 +8,14 @@ import { createDefaultState, encodeV3Blueprint, resolveV3Config, setV3UserDecisi
 
 const cli = new URL("./cli.js", import.meta.url);
 const live = process.env.START_LIVE_GOLDEN === "1";
+const fullRun = process.env.START_FULL_RUN === "1";
 
 function blueprint(configure: (state: ReturnType<typeof createDefaultState>) => ReturnType<typeof createDefaultState>) {
-  return encodeV3Blueprint(resolveV3Config(configure(createDefaultState())));
+  const configured = configure(createDefaultState());
+  return encodeV3Blueprint(resolveV3Config(setV3UserDecision(configured, "projectName", "app").state));
 }
 
-test("live golden release suites generate, verify, launch, and retain baseline evidence", { skip: !live }, () => {
+test("full generation succeeds from a fresh directory", { skip: !live && !fullRun }, () => {
   const cases = [
     ["baseline", blueprint((state) => state)],
     ["vercel-full", blueprint((state) => {
@@ -31,7 +33,8 @@ test("live golden release suites generate, verify, launch, and retain baseline e
       return state;
     })],
   ] as const;
-  for (const [name, token] of cases) {
+  const selectedCases = fullRun ? cases.slice(0, 1) : cases;
+  for (const [name, token] of selectedCases) {
     const root = mkdtempSync(join(tmpdir(), `start-golden-${name}-`));
     const result = spawnSync(process.execPath, [cli.pathname, "app", "--blueprint", token], { cwd: root, encoding: "utf8", env: process.env, timeout: 10 * 60_000 });
     assert.equal(result.status, 0, `${name}: ${result.stderr}\n${result.stdout}`);
