@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveStarterConfig } from "./core.js";
+import { resolveV3Config } from "./core.js";
 import { collectInteractiveWizardState, interactiveQuestionIds, type InteractivePrompter, type PromptChoice } from "./interactive.js";
 
 class RecordingPrompter implements InteractivePrompter {
@@ -31,18 +31,22 @@ class RecordingPrompter implements InteractivePrompter {
   }
 }
 
-test("interactive defaults ask every visible web question and resolve without a design", async () => {
+test("interactive defaults collect only v3 workspace decisions", async () => {
   const prompter = new RecordingPrompter();
-  const config = resolveStarterConfig(await collectInteractiveWizardState(prompter));
+  const state = await collectInteractiveWizardState(prompter);
+  const config = resolveV3Config(state);
   const conditional = new Set(["authMethods", "databaseProvider", "orm"]);
   assert.deepEqual(prompter.asked, interactiveQuestionIds.filter((id) => !conditional.has(id)));
-  assert.equal(config.designReference, null);
-  assert.equal(config.designSource, null);
+  assert.equal(state.version, 3);
+  assert.equal(state.stage, "review");
   assert.equal(config.packageManager, "pnpm");
-  assert.equal(config.startingSurface, "minimal");
+  assert.equal("startingSurface" in state, false);
+  assert.equal("designReference" in state, false);
+  assert.equal("theme" in config, false);
+  assert.equal("firstTask" in config, false);
 });
 
-test("interactive advanced choices match the web wizard conditionals", async () => {
+test("interactive advanced v3 choices preserve conditional infrastructure and delivery settings", async () => {
   const prompter = new RecordingPrompter({
     projectName: "agent-console",
     targetDirectory: "apps/console",
@@ -53,10 +57,6 @@ test("interactive advanced choices match the web wizard conditionals", async () 
     codeHost: "gitlab",
     uiFoundation: "radix-ui",
     shadcnPreset: "b0",
-    startingSurface: "sidebar",
-    designReference: "spotify",
-    theme: "dark",
-    motion: "expressive",
     authentication: "better-auth",
     authMethods: ["github", "microsoft"],
     databaseRequired: true,
@@ -69,20 +69,38 @@ test("interactive advanced choices match the web wizard conditionals", async () 
     playwright: true,
     opentelemetry: false,
     sentry: true,
-    firstTask: "Build the authenticated console shell",
   });
-  const config = resolveStarterConfig(await collectInteractiveWizardState(prompter));
+  const config = resolveV3Config(await collectInteractiveWizardState(prompter));
   assert.deepEqual(prompter.asked, [...interactiveQuestionIds]);
   assert.equal(config.projectName, "agent-console");
   assert.equal(config.targetDirectory, "apps/console");
   assert.equal(config.primaryAgent, "claude-code");
   assert.deepEqual(config.additionalAgents, ["codex"]);
-  assert.equal(config.designReference, "spotify");
-  assert.equal(config.designSource?.repository, "voltagent/awesome-design-md");
   assert.equal(config.databaseProvider, "aws-rds");
   assert.equal(config.orm, "prisma");
   assert.deepEqual(config.aiProviders, ["anthropic", "bedrock"]);
   assert.deepEqual(config.testing, ["playwright"]);
   assert.deepEqual(config.observability, ["sentry"]);
   assert.equal(config.ci, "gitlab-ci");
+});
+
+test("interactive keeps a Better Auth selection safe when the database confirmation is declined", async () => {
+  class DatabaseRequiredPrompter extends RecordingPrompter {
+    #databaseAnswers = [false, true];
+
+    override async confirm(id: string, message: string, defaultValue: boolean): Promise<boolean> {
+      if (id === "databaseRequired") {
+        this.asked.push(id);
+        return this.#databaseAnswers.shift() ?? true;
+      }
+      return super.confirm(id, message, defaultValue);
+    }
+  }
+
+  const prompter = new DatabaseRequiredPrompter({ authentication: "better-auth" });
+  const config = resolveV3Config(await collectInteractiveWizardState(prompter));
+  assert.deepEqual(prompter.asked.filter((id) => id === "databaseRequired"), ["databaseRequired", "databaseRequired"]);
+  assert.equal(config.databaseRequired, true);
+  assert.equal(config.databaseProvider, "neon");
+  assert.equal(config.orm, "drizzle");
 });
