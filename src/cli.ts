@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
 import { dirname, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -201,8 +201,8 @@ function scopedStartFiles(files: Record<string, string>, id: string, agentFiles:
   const isCi = (path: string) => [".github/workflows/verify.yml", ".gitlab-ci.yml", "azure-pipelines.yml"].includes(path);
   const isCapability = (path: string) => path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/") || path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts" || path.startsWith("lib/storage/") || path.startsWith("lib/ai/") || path === "instrumentation.ts" || path.startsWith("sentry.");
   const belongsTo = (path: string) => {
-    if (id === "project-contracts") return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && !["tsconfig.json", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) && !path.startsWith("tests/");
-    if (id === "quality") return ["tsconfig.json", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) || path.startsWith("tests/");
+    if (id === "project-contracts") return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && !["tsconfig.json", "next.config.ts", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) && !path.startsWith("tests/");
+    if (id === "quality") return ["tsconfig.json", "next.config.ts", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) || path.startsWith("tests/");
     if (id === "ci") return isCi(path);
     if (id === "database") return path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/");
     if (id === "authentication") return path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts";
@@ -221,9 +221,11 @@ function toolingState(target: string, manifest: StartToolingManifest): FileState
   let pkg: Record<string, unknown>;
   try { pkg = JSON.parse(readFileSync(packageFile, "utf8")) as Record<string, unknown>; } catch { return "different"; }
   const entries = (["scripts", "dependencies", "devDependencies"] as const).flatMap((section) => Object.entries(manifest[section] ?? {}).map(([name, version]) => [section, name, version] as const));
-  const matched = entries.filter(([section, name, version]) => (pkg[section] as Record<string, string> | undefined)?.[name] === version).length;
-  if (matched === entries.length) return "satisfied";
-  if (matched === 0 && entries.every(([section, name]) => (pkg[section] as Record<string, string> | undefined)?.[name] === undefined)) return "absent";
+  const matched = entries.every(([section, name, version]) => (pkg[section] as Record<string, string> | undefined)?.[name] === version);
+  const removable = manifest.removeDevDependencies ?? [];
+  const removalsSatisfied = removable.every((name) => (pkg.devDependencies as Record<string, string> | undefined)?.[name] === undefined);
+  if (matched && removalsSatisfied) return "satisfied";
+  if (entries.every(([section, name]) => (pkg[section] as Record<string, string> | undefined)?.[name] === undefined) && removalsSatisfied) return "absent";
   return "different";
 }
 
@@ -236,16 +238,36 @@ function applyToolingManifest(target: string, manifest: StartToolingManifest): v
     if (!values || Object.keys(values).length === 0) continue;
     pkg[section] = { ...(pkg[section] as Record<string, string> | undefined), ...values };
   }
+  if (manifest.removeDevDependencies?.length && pkg.devDependencies && typeof pkg.devDependencies === "object") {
+    for (const name of manifest.removeDevDependencies) delete (pkg.devDependencies as Record<string, string>)[name];
+  }
   writeFiles(target, { "package.json": `${JSON.stringify(pkg, null, 2)}\n` });
 }
 
-async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, outcome: Outcome): Promise<void> {
+function normalizeOfficialStarterForTooling(target: string, config: StarterConfigV3): void {
+  if (config.tooling !== "biome") return;
+  // This is the sole known unused import in the current official starter. Keep
+  // the edit exact and optional so upstream layout changes remain untouched.
+  const layout = assertNoSymlink(target, "app/layout.tsx");
+  if (existsSync(layout)) {
+    const content = readFileSync(layout, "utf8");
+    const normalized = content.replace('import { Geist, Geist_Mono, Inter } from "next/font/google"', 'import { Geist_Mono, Inter } from "next/font/google"');
+    if (normalized !== content) writeFileSync(layout, normalized, "utf8");
+  }
+  for (const path of ["eslint.config.mjs", "prettier.config.mjs", ".prettierignore"]) {
+    const file = assertNoSymlink(target, path);
+    if (existsSync(file) && lstatSync(file).isFile()) unlinkSync(file);
+  }
+}
+
+async function applyQuality(target: string, config: StarterConfigV3, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, outcome: Outcome): Promise<void> {
   const fileState = filesState(target, files);
   const manifestState = toolingState(target, manifest);
   if (fileState === "satisfied" && manifestState === "satisfied") return void outcome.skipped.push(step.id);
   if (fileState === "different" || manifestState === "different") outcome.conflicts.push(step.id);
   writeFiles(target, files);
   applyToolingManifest(target, manifest);
+  normalizeOfficialStarterForTooling(target, config);
   outcome.executed.push(step.id);
 }
 
@@ -257,13 +279,14 @@ function installSkills(plan: ExecutionPlanV3, target: string, progress: CommandP
   if (pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
     fail("The official Skills CLI completed without producing every expected project-local skill file.");
   }
+  console.log(`     ${lightBlue("✓")} Project skills installed: ${plan.skills.map((skill) => skill.expectedPaths[0]).join(", ")}`);
 }
 
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
   const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
   const commandProgress: CommandProgress = {
     current: 0,
-    total: 1 + (options.skipInstall ? 0 : 1 + plan.steps.filter((step) => step.id === "install-dependencies" || step.id === "install-browser").length + 1),
+    total: 1 + (options.skipInstall ? 0 : 1 + plan.steps.filter((step) => step.id === "install-dependencies" || step.id === "format-generated-source" || step.id === "install-browser").length + 1),
   };
   const startFiles = renderStartOwnedFiles(config, plan);
   const agentFiles = renderAgentEntryPoints(config);
@@ -308,7 +331,7 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
     if (step.id === "start-project-contracts" || step.id === "start-quality" || step.id === "start-ci" || step.id.startsWith("capability-")) {
       const id = step.id === "start-project-contracts" ? "project-contracts" : step.id === "start-quality" ? "quality" : step.id === "start-ci" ? "ci" : step.id.slice("capability-".length);
       const scoped = scopedStartFiles(startFiles, id, agentFiles);
-      if (step.id === "start-quality") await applyQuality(target, step, scoped, toolingManifest, outcome);
+      if (step.id === "start-quality") await applyQuality(target, config, step, scoped, toolingManifest, outcome);
       else if (Object.keys(scoped).length) await applyFiles(target, step, scoped, outcome);
       else outcome.skipped.push(step.id);
       continue;
@@ -319,7 +342,10 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
         continue;
       }
       const state = pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths));
-      if (state === "satisfied") outcome.skipped.push(step.id);
+      if (state === "satisfied") {
+        console.log(`     ${lightBlue("✓")} Project skills already available: ${plan.skills.map((skill) => skill.expectedPaths[0]).join(", ")}`);
+        outcome.skipped.push(step.id);
+      }
       else if (state === "different") {
         outcome.conflicts.push(step.id);
         installSkills(plan, target, commandProgress);
@@ -327,7 +353,7 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
       } else { installSkills(plan, target, commandProgress); outcome.executed.push(step.id); }
       continue;
     }
-    if (step.id === "install-dependencies" || step.id === "install-browser") {
+    if (step.id === "install-dependencies" || step.id === "format-generated-source" || step.id === "install-browser") {
       if (options.skipInstall) outcome.skipped.push(step.id);
       else if (!step.command) fail(`The execution plan is missing ${step.id}'s command.`);
       else { runCommand(step.command.command, target, step.title, { progress: commandProgress }); outcome.executed.push(step.id); }

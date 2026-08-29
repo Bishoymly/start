@@ -255,7 +255,7 @@ export class TerminalPrompter implements InteractivePrompter {
   }
 }
 
-export function renderSplash(version = "0.5.0"): string {
+export function renderSplash(version = "0.6.7"): string {
   return [
     "",
     logoLine(" ███████╗ ████████╗  █████╗  ██████╗  ████████╗", [127, 136, 255]),

@@ -1,11 +1,12 @@
 import { type AgentId, type ExecutionPlanV3, type StarterConfigV3 } from "./core.js";
 
-export const START_VERSION = "0.5.0";
+export const START_VERSION = "0.6.7";
 
 export type StartToolingManifest = {
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  removeDevDependencies?: readonly string[];
 };
 
 export type ReadinessVerification = {
@@ -48,26 +49,30 @@ function addDependency(target: Record<string, string>, name: string, version: st
 
 /** Internal renderer/executor handshake; merge this into, never over, upstream package.json. */
 export function createStartToolingManifest(config: StarterConfigV3): StartToolingManifest {
-  const dependencies: Record<string, string> = {};
+  // The upstream starter pins the versions current when it was published. A
+  // fresh Start workspace should instead resolve the current stable framework.
+  const dependencies: Record<string, string> = { next: "latest", react: "latest", "react-dom": "latest" };
   const devDependencies: Record<string, string> = { "@types/node": "^24.5.0", typescript: "^5.9.2" };
   const scripts: Record<string, string> = { typecheck: "tsc --noEmit" };
+  const removeDevDependencies: string[] = [];
 
   if (config.tooling === "biome") {
     addDependency(devDependencies, "@biomejs/biome", "^2.5.11");
-    // The upstream shadcn template owns its source formatting. Use Biome to
-    // parse and lint that output without requiring a reformat before Start's
-    // first readiness verification can succeed.
-    Object.assign(scripts, { lint: "biome lint .", "lint:fix": "biome lint --write .", format: "biome format --write .", "format:check": "biome lint ." });
+    // shadcn currently includes ESLint and Prettier. They are intentionally
+    // removed for the selected Biome setup, so pnpm does not report an unused
+    // deprecated ESLint package during the first install.
+    removeDevDependencies.push("eslint", "eslint-config-next", "prettier", "prettier-plugin-tailwindcss");
+    Object.assign(scripts, { lint: "biome lint .", "lint:fix": "biome lint --write .", format: "biome format --write .", "format:check": "biome format ." });
   } else {
     Object.assign(devDependencies, { eslint: "^9.39.5", "eslint-config-next": "^16.3.1", "eslint-config-prettier": "^10.1.8", prettier: "^3.6.2" });
     Object.assign(scripts, { lint: "eslint .", "lint:fix": "eslint . --fix", format: "prettier --write .", "format:check": "prettier --check ." });
   }
   if (config.testing.includes("vitest")) {
-    addDependency(devDependencies, "vitest", "^3.2.4");
+    addDependency(devDependencies, "vitest", "latest");
     Object.assign(scripts, { test: "vitest run", "test:watch": "vitest" });
   }
   if (config.testing.includes("playwright")) {
-    addDependency(devDependencies, "@playwright/test", "^1.55.0");
+    addDependency(devDependencies, "@playwright/test", "latest");
     Object.assign(scripts, { "test:e2e:install": "playwright install chromium", "test:e2e": "playwright test" });
   }
   if (config.databaseRequired && config.orm === "drizzle") {
@@ -107,7 +112,7 @@ export function createStartToolingManifest(config: StarterConfigV3): StartToolin
   if (config.testing.includes("playwright")) verify.push(run(config, "test:e2e"));
   verify.push(run(config, "build"));
   scripts.verify = verify.join(" && ");
-  return { scripts, dependencies, devDependencies };
+  return { scripts, dependencies, devDependencies, removeDevDependencies };
 }
 
 function renderAgents(config: StarterConfigV3): string {
@@ -167,8 +172,9 @@ function renderEnvironmentDocumentation(plan: ExecutionPlanV3): string {
 function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   const files: Record<string, string> = {
     "tsconfig.json": `${JSON.stringify({ compilerOptions: { target: "ES2022", lib: ["dom", "dom.iterable", "esnext"], allowJs: false, skipLibCheck: true, strict: true, noEmit: true, esModuleInterop: true, module: "esnext", moduleResolution: "bundler", resolveJsonModule: true, isolatedModules: true, jsx: "preserve", incremental: true, plugins: [{ name: "next" }], paths: { "@/*": ["./*"] } }, include: ["next-env.d.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts", "**/*.ts", "**/*.tsx"], exclude: ["node_modules"] }, null, 2)}\n`,
+    "next.config.ts": "import type { NextConfig } from \"next\";\n\nconst nextConfig: NextConfig = {\n  allowedDevOrigins: [\"127.0.0.1\"],\n};\n\nexport default nextConfig;\n",
   };
-  if (config.tooling === "biome") files["biome.json"] = `${JSON.stringify({ $schema: "https://biomejs.dev/schemas/2.5.11/schema.json", vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }, files: { includes: ["**", "!!.next", "!!node_modules"] }, formatter: { enabled: true, indentStyle: "space" }, linter: { enabled: true, rules: { recommended: true } }, css: { parser: { tailwindDirectives: true } } }, null, 2)}\n`;
+  if (config.tooling === "biome") files["biome.json"] = `${JSON.stringify({ $schema: "https://biomejs.dev/schemas/2.5.11/schema.json", vcs: { enabled: true, clientKind: "git", useIgnoreFile: true }, files: { includes: ["**", "!!.next", "!!node_modules", "!!test-results", "!!playwright-report", "!!tsconfig.json"] }, formatter: { enabled: true, indentStyle: "space" }, linter: { enabled: true, rules: { preset: "recommended" } }, css: { parser: { tailwindDirectives: true } } }, null, 2)}\n`;
   else {
     files["eslint.config.mjs"] = "import { defineConfig, globalIgnores } from \"eslint/config\";\nimport nextVitals from \"eslint-config-next/core-web-vitals\";\nimport nextTypeScript from \"eslint-config-next/typescript\";\nimport prettier from \"eslint-config-prettier/flat\";\nexport default defineConfig([...nextVitals, ...nextTypeScript, prettier, globalIgnores([\".next/**\", \"node_modules/**\"])]);\n";
     files["prettier.config.mjs"] = "const config = { semi: true, singleQuote: false, trailingComma: \"all\" };\nexport default config;\n";

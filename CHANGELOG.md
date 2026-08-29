@@ -2,6 +2,13 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.7] - 2026-08-29
+
+- Resolve current Next.js, React, Vitest, and Playwright releases in fresh generated workspaces.
+- Remove unused upstream ESLint/Prettier packages for Biome projects, migrate Biome's deprecated rule setting, and format the initial source before verification.
+- Keep repeated verification clean by ignoring generated Playwright output and Next-managed TypeScript configuration.
+- Report the exact hidden project-local skill paths when skills are installed or reused, and allow Playwright's local Next origin without warnings.
+
 ## [0.6.6] - 2026-08-29
 
 - Fixed the generated Vitest contract so it checks files that exist before readiness verification runs.
@@ -42,6 +49,7 @@ All notable changes to Start are documented here.
 - Added Playwright browser installation and a generated portable `verify` contract.
 
 [0.4.0]: https://github.com/bishoymly/start/releases/tag/v0.4.0
+[0.6.7]: https://github.com/bishoymly/start/releases/tag/v0.6.7
 [0.6.1]: https://github.com/bishoymly/start/releases/tag/v0.6.1
 [0.6.2]: https://github.com/bishoymly/start/releases/tag/v0.6.2
 [0.6.3]: https://github.com/bishoymly/start/releases/tag/v0.6.3

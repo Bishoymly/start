@@ -24,6 +24,9 @@ test("durable baseline preserves official UI ownership and has no service leakag
   assert.equal(files["start-tooling.json"] !== undefined, true);
   assert.equal(files["tests/readiness.test.ts"].includes('from "vitest"'), true);
   assert.equal(files["tests/readiness.test.ts"].includes("START_PLAN.md"), true);
+  assert.equal(files["biome.json"].includes('"!!test-results"'), true);
+  assert.equal(files["biome.json"].includes('"!!tsconfig.json"'), true);
+  assert.equal(files["next.config.ts"].includes('allowedDevOrigins: ["127.0.0.1"]'), true);
   assert.equal(tooling.dependencies?.["better-auth"], undefined);
   assert.equal(tooling.dependencies?.ai, undefined);
   assert.equal(files["lib/db/schema.ts"], undefined);
