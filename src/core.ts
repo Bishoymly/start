@@ -1,4 +1,4 @@
-export const DESIGN_REFERENCE_PATHS = [
+const DESIGN_REFERENCE_PATHS = [
   "design-md/apple/DESIGN.md",
   "design-md/airbnb/DESIGN.md",
   "design-md/nike/DESIGN.md",
@@ -11,7 +11,7 @@ export const DESIGN_REFERENCE_PATHS = [
   "design-md/wired/DESIGN.md",
 ] as const;
 
-export const DESIGN_REPOSITORY = "voltagent/awesome-design-md" as const;
+const DESIGN_REPOSITORY = "voltagent/awesome-design-md" as const;
 
 export const agents = ["codex", "claude-code", "cursor", "github-copilot", "gemini-cli", "opencode", "windsurf", "grok-build"] as const;
 export type AgentId = (typeof agents)[number];
@@ -29,13 +29,13 @@ export const agentLabels: Record<AgentId, string> = {
 
 export type DecisionSource = "recommended" | "user";
 export type Decision<T> = { value: T; source: DecisionSource };
-export type Theme = "light" | "dark" | "system";
-export type MotionLevel = "off" | "subtle" | "expressive";
-export type DesignId = "apple" | "airbnb" | "nike" | "stripe" | "linear" | "notion" | "spotify" | "figma" | "shopify" | "wired";
-export type WizardStage = "project" | "ui" | "services" | "delivery" | "review";
-export const wizardStages: WizardStage[] = ["project", "ui", "services", "delivery", "review"];
+type Theme = "light" | "dark" | "system";
+type MotionLevel = "off" | "subtle" | "expressive";
+type DesignId = "apple" | "airbnb" | "nike" | "stripe" | "linear" | "notion" | "spotify" | "figma" | "shopify" | "wired";
+type WizardStage = "project" | "ui" | "services" | "delivery" | "review";
+const wizardStages: WizardStage[] = ["project", "ui", "services", "delivery", "review"];
 
-export interface TypographyToken {
+interface TypographyToken {
   family: string;
   weight?: string;
   size?: string;
@@ -43,7 +43,7 @@ export interface TypographyToken {
   letterSpacing?: string;
 }
 
-export interface ComponentStyle {
+interface ComponentStyle {
   background?: string;
   foreground?: string;
   border?: string;
@@ -52,7 +52,7 @@ export interface ComponentStyle {
   padding?: string;
 }
 
-export interface DesignReferenceV1 {
+interface DesignReferenceV1 {
   id: DesignId;
   displayName: string;
   source: {
@@ -78,7 +78,7 @@ export interface DesignReferenceV1 {
 }
 
 export type UiFoundation = "base-ui" | "radix-ui";
-export type StartingSurface = "minimal" | "top-nav" | "sidebar";
+type StartingSurface = "minimal" | "top-nav" | "sidebar";
 export type ShadcnPresetTheme = "neutral" | "stone" | "zinc" | "gray" | "amber" | "blue" | "cyan" | "emerald" | "fuchsia" | "green" | "indigo" | "lime" | "orange" | "pink" | "purple" | "red" | "rose" | "sky" | "teal" | "violet" | "yellow" | "mauve" | "olive" | "mist" | "taupe";
 export type ShadcnPreset = {
   code: string;
@@ -107,7 +107,7 @@ export type CiChoice = "github-actions" | "gitlab-ci" | "azure-pipelines";
 export type TestingChoice = "vitest" | "playwright";
 export type ObservabilityChoice = "opentelemetry" | "sentry";
 
-export interface WizardStateV2 {
+interface WizardStateV2 {
   version: 2;
   stage: WizardStage;
   projectName: Decision<string>;
@@ -145,7 +145,7 @@ export interface WizardStateV2 {
   designProvenance: DesignReferenceV1["source"] | null;
 }
 
-export interface StarterConfigV2 {
+interface StarterConfigV2 {
   version: 2;
   projectName: string;
   targetDirectory: string;
@@ -177,7 +177,7 @@ export interface StarterConfigV2 {
   firstTask: string;
 }
 
-export interface RecommendationResult {
+interface RecommendationResult {
   state: WizardStateV2;
   changed: string[];
   reasons: string[];
@@ -257,11 +257,11 @@ export function parseShadcnPresetInput(input: string): { preset: ShadcnPreset; f
   return { preset, ...(base ? { foundation: base === "base" ? "base-ui" : "radix-ui" } : {}) };
 }
 
-export function isValidFirstTask(value: string): boolean {
+function isValidFirstTask(value: string): boolean {
   return value.length <= 500 && !/[\0\u0001-\u0008\u000b\u000c\u000e-\u001f]/.test(value);
 }
 
-export function createDefaultWizardState(): WizardStateV2 {
+function createDefaultWizardState(): WizardStateV2 {
   return {
     version: 2,
     stage: "project",
@@ -305,7 +305,7 @@ function setRecommended<T>(decision: Decision<T>, value: T, label: string, chang
   return decision;
 }
 
-export const designDefaults: Record<DesignId, { theme: "light" | "dark"; motion: MotionLevel }> = {
+const designDefaults: Record<DesignId, { theme: "light" | "dark"; motion: MotionLevel }> = {
   apple: { theme: "light", motion: "subtle" },
   airbnb: { theme: "light", motion: "subtle" },
   nike: { theme: "light", motion: "subtle" },
@@ -351,7 +351,7 @@ export const recommendedDatabaseByHosting: Record<HostingChoice, DatabaseProvide
   docker: "docker",
 };
 
-export function recommendationFor(state: WizardStateV2, key: keyof WizardStateV2): unknown {
+function recommendationFor(state: WizardStateV2, key: keyof WizardStateV2): unknown {
   const design = state.designReference.value;
   const defaults = createDefaultWizardState();
   if (key === "theme") return design ? designDefaults[design].theme : defaults.theme.value;
@@ -362,7 +362,7 @@ export function recommendationFor(state: WizardStateV2, key: keyof WizardStateV2
   return (defaults as unknown as Record<string, Decision<unknown>>)[key as string]?.value;
 }
 
-export function recomputeRecommendations(input: WizardStateV2): RecommendationResult {
+function recomputeRecommendations(input: WizardStateV2): RecommendationResult {
   const state = structuredClone(input);
   const changed: string[] = [];
   const reasons: string[] = [];
@@ -399,7 +399,7 @@ export function recomputeRecommendations(input: WizardStateV2): RecommendationRe
   return { state, changed, reasons };
 }
 
-export function setUserDecision<K extends keyof WizardStateV2>(state: WizardStateV2, key: K, value: WizardStateV2[K] extends Decision<infer T> ? T : never): RecommendationResult {
+function setUserDecision<K extends keyof WizardStateV2>(state: WizardStateV2, key: K, value: WizardStateV2[K] extends Decision<infer T> ? T : never): RecommendationResult {
   const next = structuredClone(state);
   const previousHosting = next.hosting.value;
   const current = next[key];
@@ -425,7 +425,7 @@ export function setUserDecision<K extends keyof WizardStateV2>(state: WizardStat
   return recomputeRecommendations(next);
 }
 
-export function useRecommendation<K extends keyof WizardStateV2>(state: WizardStateV2, key: K): RecommendationResult {
+function useRecommendation<K extends keyof WizardStateV2>(state: WizardStateV2, key: K): RecommendationResult {
   const next = structuredClone(state);
   const current = next[key];
   if (current && typeof current === "object" && "source" in current) {
@@ -464,7 +464,7 @@ export function isValidTargetDirectory(value: string): boolean {
   return value.split("/").every((segment) => segment !== "." && segment !== ".." && !reserved.has(segment.toLowerCase()) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(segment) && /^[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9_-]$|^[a-zA-Z0-9]$/.test(segment));
 }
 
-export function validateWizardState(state: WizardStateV2): { errors: string[]; warnings: string[] } {
+function validateWizardState(state: WizardStateV2): { errors: string[]; warnings: string[] } {
   const errors: string[] = [];
   const warnings: string[] = [];
   if (Boolean(state.designReference.value) !== Boolean(state.designProvenance)) errors.push("The design reference and its provenance must be selected together.");
@@ -480,7 +480,7 @@ export function validateWizardState(state: WizardStateV2): { errors: string[]; w
   return { errors, warnings };
 }
 
-export function resolveStarterConfig(state: WizardStateV2): StarterConfigV2 {
+function resolveStarterConfig(state: WizardStateV2): StarterConfigV2 {
   const validation = validateWizardState(state);
   if (validation.errors.length) throw new Error(validation.errors.join(" "));
   const designReference = state.designReference.value;
@@ -530,7 +530,7 @@ function fromBase64Url(value: string): string {
   return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
 }
 
-export function encodeBlueprint(config: StarterConfigV2): string {
+function encodeBlueprint(config: StarterConfigV2): string {
   return `v2.${toBase64Url(JSON.stringify(config))}`;
 }
 
@@ -545,7 +545,7 @@ function isShadcnPreset(value: unknown): value is ShadcnPreset {
   return Boolean(decoded && JSON.stringify(decoded) === JSON.stringify(preset));
 }
 
-export function decodeBlueprint(token: string): StarterConfigV2 {
+function decodeBlueprint(token: string): StarterConfigV2 {
   if (token.startsWith("v1.")) throw new Error("Blueprint v1 is no longer supported. Rebuild this blueprint at https://bishoy.io/start.");
   if (!token.startsWith("v2.") || token.length > 32_000) throw new Error("Unsupported or oversized blueprint token.");
   let parsed: unknown;
@@ -594,12 +594,12 @@ export function decodeBlueprint(token: string): StarterConfigV2 {
   return config;
 }
 
-export function buildStarterCommand(config: StarterConfigV2): string {
+function buildStarterCommand(config: StarterConfigV2): string {
   const launcher: Record<PackageManager, string> = { npm: "npx", pnpm: "pnpm dlx", yarn: "yarn dlx", bun: "bunx" };
   return `${launcher[config.packageManager]} @bishoymly/start@latest ${config.targetDirectory} --blueprint ${encodeBlueprint(config)}`;
 }
 
-export function buildAgentKickoffPrompt(config: StarterConfigV2): string {
+function buildAgentKickoffPrompt(config: StarterConfigV2): string {
   const task = config.firstTask || "Implement the first useful vertical slice for this product";
   const sources = config.designReference ? "AGENTS.md, APP_BLUEPRINT.md, DESIGN.md, and README.md" : "AGENTS.md, APP_BLUEPRINT.md, and README.md";
   return `Read ${sources} before editing. Confirm the generated baseline is healthy, then ${task.charAt(0).toLowerCase()}${task.slice(1)}. Preserve the selected ${config.shadcnPreset.style} shadcn preset and ${config.startingSurface} starting surface. Do not add unselected providers or infrastructure. Add focused tests, run ${config.packageManager} run verify, and report the exact results and any remaining risks.`;
@@ -970,6 +970,10 @@ function commandLauncher(packageManager: PackageManager): string {
   return { npm: "npx", pnpm: "pnpm dlx", yarn: "yarn dlx", bun: "bunx" }[packageManager];
 }
 
+function packageLauncherForPlan(config: Pick<StarterConfigV3, "packageManager">): string {
+  return { npm: "npx", pnpm: "pnpm exec", yarn: "yarn exec", bun: "bunx" }[config.packageManager];
+}
+
 export function buildV3StarterCommand(config: StarterConfigV3, options: { planOnly?: boolean } = {}): string {
   return `${commandLauncher(config.packageManager)} @bishoymly/start@latest ${config.targetDirectory} --blueprint ${encodeV3Blueprint(config)}${options.planOnly ? " --plan" : ""}`;
 }
@@ -1018,20 +1022,31 @@ export function buildExecutionPlan(config: StarterConfigV3): ExecutionPlanV3 {
   if (validation.errors.length) throw new Error(validation.errors.join(" "));
   const base = config.uiFoundation === "base-ui" ? "base" : "radix";
   const launcher = commandLauncher(config.packageManager);
-  const agents = agentSet(config);
-  const skills: SkillContract[] = [
-    { id: "design-taste-frontend", source: "leonxlnx/taste-skill", agents, projectScope: true, expectedPaths: [".agents/skills/design-taste-frontend/SKILL.md"], installCommand: `${launcher} skills add leonxlnx/taste-skill --skill design-taste-frontend --yes` },
-    { id: "browser-verification", source: "vercel-labs/agent-skills", agents, projectScope: true, expectedPaths: [".agents/skills/browser-verification/SKILL.md"], installCommand: `${launcher} skills add vercel-labs/agent-skills --skill browser-verification --yes` },
-  ];
+  const skillRoot: Record<AgentId, string> = {
+    codex: ".agents/skills", "claude-code": ".claude/skills", cursor: ".cursor/skills", "github-copilot": ".github/skills",
+    "gemini-cli": ".gemini/skills", opencode: ".opencode/skills", windsurf: ".windsurf/skills", "grok-build": ".grok/skills",
+  };
+  // The Skills CLI's --agent switch makes ownership explicit: a selected agent
+  // receives its native project-local skill directory, not a generic copy.
+  const skills = agentSet(config).flatMap((agent) => [
+    { id: `design-taste-frontend-${agent}`, source: "leonxlnx/taste-skill", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/design-taste-frontend/SKILL.md`], installCommand: `${launcher} skills add leonxlnx/taste-skill --skill design-taste-frontend --agent ${agent} --yes` },
+    { id: `browser-verification-${agent}`, source: "vercel-labs/agent-skills", agents: [agent], projectScope: true, expectedPaths: [`${skillRoot[agent]}/browser-verification/SKILL.md`], installCommand: `${launcher} skills add vercel-labs/agent-skills --skill browser-verification --agent ${agent} --yes` },
+  ] satisfies SkillContract[]);
   const capabilities = capabilitiesForV3(config);
   const steps: ExecutionPlanStep[] = [
-    { id: "official-shadcn-init", kind: "official-command", owner: "official", title: "Initialize the official shadcn template", description: "Runs the upstream CLI first and preserves every file it creates.", command: { command: `${launcher} shadcn@latest init --template next --base ${base} --preset ${config.shadcnPreset.code} --yes`, postcondition: "absent", conflictPolicy: "prompt", affectedPaths: ["app", "components", "components.json", "package.json"] } },
+    { id: "official-shadcn-init", kind: "official-command", owner: "official", title: "Initialize the official shadcn template", description: "Runs the documented upstream CLI first and preserves every file it creates.", command: { command: `${launcher} shadcn@latest init --template next --base ${base} --preset ${config.shadcnPreset.code} --yes`, postcondition: "absent", conflictPolicy: "prompt", affectedPaths: ["app", "components", "components.json", "package.json"] } },
+    { id: "record-start-state", kind: "start-configuration", owner: "start", title: "Record Start v3 template state", description: "Records the selected official template contract so only a prior Start run can be resumed.", operations: ["write .start/v3-state.json"] },
+    { id: "start-project-contracts", kind: "start-configuration", owner: "start", title: "Write project contracts", description: "Writes the execution plan, environment contract, tooling manifest, and readiness guidance owned by Start.", operations: ["write START_PLAN.md", "write START_ENVIRONMENT.md", "write .env.example", "write start-tooling.json"] },
     { id: "start-agent-instructions", kind: "start-configuration", owner: "start", title: "Add durable agent instructions", description: "Adds AGENTS.md and selected native agent entry points; instructions require waiting for PRD or requirements.", operations: ["write AGENTS.md", "write selected native agent entry points"] },
     { id: "start-quality", kind: "start-configuration", owner: "start", title: "Configure quality and browser verification", description: "Adds strict TypeScript, selected formatter/linter, Vitest, Playwright, browser guidance, and one verify command without changing official UI output.", operations: ["configure TypeScript", "configure formatter and linter", "configure tests", "configure verify command"] },
     ...(config.ciEnabled ? [{ id: "start-ci", kind: "start-configuration" as const, owner: "start" as const, title: "Configure CI", description: `Adds ${config.ci} to run the same verify command used locally.`, operations: ["write CI workflow"] }] : []),
     ...capabilities.map((capability) => ({ id: `capability-${capability.id.replaceAll(":", "-")}`, kind: "start-configuration" as const, owner: "start" as const, title: `Configure ${capability.id}`, description: capability.description, operations: ["add dependency and framework configuration", "document environment contract"], capabilities: [capability.id] })),
     { id: "install-project-skills", kind: "skill-install", owner: "official", title: "Install selected project skills", description: "Uses the official Skills CLI at project scope and verifies installer-produced files and provenance.", operations: skills.map((skill) => skill.installCommand) },
+    { id: "install-dependencies", kind: "official-command", owner: "user", title: "Install project dependencies", description: "Installs the exact dependency graph after Start-owned manifests are in place.", command: { command: { npm: "npm install", pnpm: "pnpm install", yarn: "yarn install", bun: "bun install" }[config.packageManager], postcondition: "absent", conflictPolicy: "preserve", affectedPaths: ["node_modules"] } },
+    ...(config.testing.includes("playwright") ? [{ id: "install-browser", kind: "official-command" as const, owner: "official" as const, title: "Install Playwright Chromium", description: "Installs the browser required by the selected browser verification suite.", command: { command: `${packageLauncherForPlan(config)} playwright install chromium`, postcondition: "absent" as const, conflictPolicy: "preserve" as const, affectedPaths: [] } }] : []),
     { id: "verify-readiness", kind: "verification", owner: "start", title: "Verify repository readiness", description: "Runs formatting, linting, typecheck, unit tests, Playwright, production build, and records a readiness report.", command: { command: `${config.packageManager} run verify`, postcondition: "absent", conflictPolicy: "preserve", affectedPaths: ["START_READINESS.md"] } },
+    { id: "record-readiness", kind: "start-configuration", owner: "start", title: "Write readiness report", description: "Records resolved installed versions, warnings, verification, and whether readiness is actually complete.", operations: ["write START_READINESS.md"] },
+    { id: "initialize-git", kind: "official-command", owner: "user", title: "Initialize Git repository", description: "Initializes main when the target is not already inside a Git worktree.", command: { command: "git init --initial-branch=main", postcondition: "absent", conflictPolicy: "preserve", affectedPaths: [".git"] } },
   ];
   return { version: 3, blueprint: encodeV3Blueprint(config), steps, skills, environment: environmentForV3(config), capabilities, verification: { command: `${config.packageManager} run verify`, checks: ["format", "lint", "typecheck", "unit tests", "Playwright", "production build"], awaitRequirements: true }, warnings: [...validation.warnings, "Repository readiness is complete only after verification succeeds. Await a PRD or requirements before product work."] };
 }

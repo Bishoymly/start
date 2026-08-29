@@ -54,7 +54,7 @@ Start checks a command or capability's postcondition on reruns:
 2. Matching state is skipped.
 3. Differing state becomes one coherent conflict decision.
 
-Interactive runs can preserve or explicitly overwrite that scoped configuration. Non-interactive runs stop on a conflict unless overwrite was explicitly authorized. Path traversal and symbolic-link escapes are rejected before writing.
+The official template is resumable only when `.start/v3-state.json` matches the exact v3 blueprint; an existing official-looking directory without that marker is a conflict, never a silent skip. Interactive runs can preserve or explicitly overwrite one scoped configuration step. In non-interactive mode, authorize only the exact step, for example `--overwrite start-quality`; there is no global overwrite. Path traversal and symbolic-link escapes are rejected for every output path and ancestor before writing.
 
 When the readiness report is clean, the generated repository is ready for product work—but the agent instructions deliberately say to await a PRD or requirements before implementing product behavior.
 
@@ -67,6 +67,10 @@ npm install
 npm test
 ```
 
-The CLI and planner tests cover the portable v3 contract. Live release verification additionally exercises representative empty-directory repositories with current upstream tooling.
+The CLI and planner tests cover the portable v3 contract. An opt-in release suite runs baseline, Vercel full-stack, and Azure alternative blueprints through the live CLI, install, browser verification, and generated baseline evidence:
+
+```bash
+START_LIVE_GOLDEN=1 npm test
+```
 
 Start is released under the [MIT License](./LICENSE).

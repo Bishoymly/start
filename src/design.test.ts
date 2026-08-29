@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DESIGN_REFERENCE_PATHS } from "./core.js";
+import { DESIGN_REFERENCE_PATHS } from "./design-contracts.js";
 import { bundledDesignReferences, getBundledDesignReference, matchingBundledFallback, normalizeDesignMarkdown, sha256, verifyDesignMarkdown } from "./design.js";
 
 test("all ten allowlisted paths have normalized bundled fallbacks", () => {

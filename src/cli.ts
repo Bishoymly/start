@@ -27,7 +27,8 @@ import { collectInteractiveWizardState, TerminalPrompter } from "./interactive.j
 const webBuilderUrl = "https://bishoy.io/start";
 
 type FileState = "absent" | "satisfied" | "different";
-type Outcome = { executed: string[]; skipped: string[]; conflicts: string[] };
+type Outcome = { executed: string[]; skipped: string[]; conflicts: string[]; warnings: string[] };
+type StartState = { version: 3; blueprint: string; officialCommand: string };
 
 function fail(message: string): never {
   console.error(`\nStart generation stopped: ${message}`);
@@ -47,7 +48,7 @@ Usage:
 Options:
   --blueprint <token>  Execute a portable v3 blueprint
   --plan               Print the ordered execution plan without writing files or running commands
-  --overwrite          Approve replacing conflicting Start-owned configuration
+  --overwrite <step>   Approve replacing one conflicting Start-owned plan step (repeatable)
   --skip-install       Skip project skill installation, dependency installation, and verification
   --web                Open ${webBuilderUrl}
   --help, -h           Show this help`);
@@ -65,13 +66,15 @@ function openWebBuilder(): void {
 
 function parseArguments(args: string[]) {
   const blueprintIndex = args.indexOf("--blueprint");
-  const optionValues = new Set([blueprintIndex + 1]);
+  const overwriteIndexes = args.flatMap((argument, index) => argument === "--overwrite" ? [index] : []);
+  const optionValues = new Set([blueprintIndex + 1, ...overwriteIndexes.map((index) => index + 1)]);
   const targets = args.filter((argument, index) => !argument.startsWith("-") && !optionValues.has(index));
   if (targets.length > 1) fail("Only one target folder may be supplied.");
+  if (overwriteIndexes.some((index) => !args[index + 1] || args[index + 1].startsWith("-"))) fail("--overwrite requires a plan step ID, for example --overwrite start-quality.");
   if (args.some((argument) => argument.startsWith("--") && !["--blueprint", "--plan", "--overwrite", "--skip-install", "--web", "--help"].includes(argument))) {
     fail("Unknown option. Run with --help for supported options.");
   }
-  return { blueprint: blueprintIndex >= 0 ? args[blueprintIndex + 1] : undefined, target: targets[0], planOnly: args.includes("--plan"), overwrite: args.includes("--overwrite"), skipInstall: args.includes("--skip-install") };
+  return { blueprint: blueprintIndex >= 0 ? args[blueprintIndex + 1] : undefined, target: targets[0], planOnly: args.includes("--plan"), overwrite: new Set(overwriteIndexes.map((index) => args[index + 1])), skipInstall: args.includes("--skip-install") };
 }
 
 function checkTarget(root: string, targetDirectory: string): string {
@@ -86,31 +89,42 @@ function checkTarget(root: string, targetDirectory: string): string {
   return target;
 }
 
+function assertNoSymlink(target: string, relativePath = "."): string {
+  const absolute = resolve(target, relativePath);
+  if (absolute !== target && !absolute.startsWith(`${target}/`)) fail("A planned path escaped the target directory.");
+  let cursor = target;
+  if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) fail("Start will not write through a symbolic link.");
+  for (const segment of relativePath.split("/").filter(Boolean)) {
+    cursor = resolve(cursor, segment);
+    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) fail(`Start will not write through symbolic link: ${relativePath}`);
+  }
+  return absolute;
+}
+
 function filesState(target: string, files: Record<string, string>): FileState {
   const entries = Object.entries(files);
-  const present = entries.filter(([path]) => existsSync(resolve(target, path)));
+  const present = entries.filter(([path]) => existsSync(assertNoSymlink(target, path)));
   if (present.length === 0) return "absent";
-  if (present.length === entries.length && present.every(([path, content]) => readFileSync(resolve(target, path), "utf8") === content)) return "satisfied";
+  if (present.length === entries.length && present.every(([path, content]) => readFileSync(assertNoSymlink(target, path), "utf8") === content)) return "satisfied";
   return "different";
 }
 
 function pathExistsState(target: string, paths: readonly string[]): FileState {
-  const count = paths.filter((path) => existsSync(resolve(target, path))).length;
+  const count = paths.filter((path) => existsSync(assertNoSymlink(target, path))).length;
   return count === 0 ? "absent" : count === paths.length ? "satisfied" : "different";
 }
 
 function writeFiles(target: string, files: Record<string, string>) {
   for (const [path, content] of Object.entries(files)) {
-    const absolute = resolve(target, path);
-    if (absolute !== target && !absolute.startsWith(`${target}/`)) fail("A planned file escaped the target directory.");
+    const absolute = assertNoSymlink(target, path);
     mkdirSync(dirname(absolute), { recursive: true });
     writeFileSync(absolute, content, "utf8");
   }
 }
 
-async function conflictDecision(step: ExecutionPlanStep, overwrite: boolean, interactive: boolean): Promise<"overwrite" | "preserve"> {
-  if (overwrite) return "overwrite";
-  if (!interactive) fail(`Conflicting configuration for ${step.title}. Re-run with --overwrite to authorize this command or capability.`);
+async function conflictDecision(step: ExecutionPlanStep, overwrite: Set<string>, interactive: boolean): Promise<"overwrite" | "preserve"> {
+  if (overwrite.has(step.id)) return "overwrite";
+  if (!interactive) fail(`Conflicting configuration for ${step.title}. Re-run with --overwrite ${step.id} to authorize only this plan step.`);
   const prompt = createInterface({ input: stdin, output: stdout });
   try {
     const answer = (await prompt.question(`\n${step.title} differs from the selected blueprint. Overwrite this command or capability? [y/N] `)).trim().toLowerCase();
@@ -134,18 +148,41 @@ function runCommand(command: string, cwd: string, label: string, allowFailure = 
   return true;
 }
 
-function plannedVersions(target: string): Record<string, string> {
+function resolvedVersions(target: string): Record<string, string> {
   const versions: Record<string, string> = { node: process.version };
   const packageFile = resolve(target, "package.json");
   if (!existsSync(packageFile)) return versions;
   try {
     const pkg = JSON.parse(readFileSync(packageFile, "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
-    for (const name of ["next", "shadcn", "typescript", "vitest", "playwright"]) {
-      const version = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
-      if (version) versions[name] = version;
+    for (const name of ["next", "shadcn", "typescript", "vitest", "@playwright/test"]) {
+      const installed = resolve(target, "node_modules", ...name.split("/"), "package.json");
+      if (existsSync(installed)) {
+        try {
+          const packageVersion = (JSON.parse(readFileSync(installed, "utf8")) as { version?: unknown }).version;
+          if (typeof packageVersion === "string") versions[name] = packageVersion;
+        } catch { /* retained as a warning in the readiness report below */ }
+      }
+      const declared = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+      if (!versions[name] && declared) versions[`${name} (declared; not installed)`] = declared;
     }
   } catch { /* the official CLI owns package.json; its verifier will report malformed JSON */ }
   return versions;
+}
+
+function readStartState(target: string): StartState | null {
+  const stateFile = assertNoSymlink(target, ".start/v3-state.json");
+  if (!existsSync(stateFile)) return null;
+  try {
+    const value = JSON.parse(readFileSync(stateFile, "utf8")) as Partial<StartState>;
+    return value.version === 3 && typeof value.blueprint === "string" && typeof value.officialCommand === "string" ? value as StartState : null;
+  } catch { return null; }
+}
+
+function officialState(target: string, command: NonNullable<ExecutionPlanStep["command"]>, blueprint: string): FileState {
+  const state = readStartState(target);
+  const existing = pathExistsState(target, command.affectedPaths);
+  if (!state) return existing === "absent" ? "absent" : "different";
+  return state.blueprint === blueprint && state.officialCommand === command.command && existing === "satisfied" ? "satisfied" : "different";
 }
 
 function initializeGit(target: string): void {
@@ -156,7 +193,7 @@ function initializeGit(target: string): void {
   else console.warn("Git initialization was skipped. Initialize it later with git init --initial-branch=main.");
 }
 
-async function applyFiles(target: string, step: ExecutionPlanStep, files: Record<string, string>, overwrite: boolean, interactive: boolean, outcome: Outcome): Promise<void> {
+async function applyFiles(target: string, step: ExecutionPlanStep, files: Record<string, string>, overwrite: Set<string>, interactive: boolean, outcome: Outcome): Promise<void> {
   const state = filesState(target, files);
   if (state === "satisfied") return void outcome.skipped.push(step.id);
   if (state === "different") {
@@ -169,16 +206,18 @@ async function applyFiles(target: string, step: ExecutionPlanStep, files: Record
 
 function scopedStartFiles(files: Record<string, string>, id: string, agentFiles: Record<string, string>): Record<string, string> {
   const isCi = (path: string) => [".github/workflows/verify.yml", ".gitlab-ci.yml", "azure-pipelines.yml"].includes(path);
-  const isCapability = (path: string) => path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/") || path === "lib/auth.ts" || path === "lib/auth-session.ts" || path.startsWith("lib/storage/") || path.startsWith("lib/ai/") || path === "instrumentation.ts" || path.startsWith("sentry.");
+  const isCapability = (path: string) => path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/") || path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts" || path.startsWith("lib/storage/") || path.startsWith("lib/ai/") || path === "instrumentation.ts" || path.startsWith("sentry.");
   const belongsTo = (path: string) => {
+    if (id === "project-contracts") return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && !["tsconfig.json", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) && !path.startsWith("tests/");
+    if (id === "quality") return ["tsconfig.json", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) || path.startsWith("tests/");
     if (id === "ci") return isCi(path);
     if (id === "database") return path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/");
-    if (id === "authentication") return path === "lib/auth.ts" || path === "lib/auth-session.ts";
+    if (id === "authentication") return path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts";
     if (id === "storage") return path.startsWith("lib/storage/");
     if (id.startsWith("ai-")) return path.startsWith("lib/ai/");
     if (id === "opentelemetry") return path === "instrumentation.ts";
     if (id === "sentry") return path.startsWith("sentry.");
-    return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && path !== "start-tooling.json";
+    return false;
   };
   return Object.fromEntries(Object.entries(files).filter(([path]) => belongsTo(path)));
 }
@@ -207,7 +246,7 @@ function applyToolingManifest(target: string, manifest: StartToolingManifest): v
   writeFiles(target, { "package.json": `${JSON.stringify(pkg, null, 2)}\n` });
 }
 
-async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, overwrite: boolean, interactive: boolean, outcome: Outcome): Promise<void> {
+async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, overwrite: Set<string>, interactive: boolean, outcome: Outcome): Promise<void> {
   const fileState = filesState(target, files);
   const manifestState = toolingState(target, manifest);
   if (fileState === "satisfied" && manifestState === "satisfied") return void outcome.skipped.push(step.id);
@@ -221,14 +260,17 @@ async function applyQuality(target: string, step: ExecutionPlanStep, files: Reco
 }
 
 function installSkills(plan: ExecutionPlanV3, target: string): void {
+  if (process.env.START_TEST_SKILL_OUTPUTS === "1") {
+    writeFiles(target, Object.fromEntries(plan.skills.flatMap((skill) => skill.expectedPaths.map((path) => [path, "# test-only installed skill\n"]))));
+  }
   for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`);
-  if (process.env.START_TEST_SKIP_EXECUTION !== "1" && pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
+  if (pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
     fail("The official Skills CLI completed without producing every expected project-local skill file.");
   }
 }
 
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
-  const outcome: Outcome = { executed: [], skipped: [], conflicts: [] };
+  const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
   const interactive = Boolean(stdin.isTTY && stdout.isTTY && !options.blueprint);
   mkdirSync(target, { recursive: true });
   const startFiles = renderStartOwnedFiles(config, plan);
@@ -239,26 +281,31 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
     if (step.id === "official-shadcn-init") {
       const contract = step.command;
       if (!contract) fail("The official shadcn plan step is missing its command.");
-      const state = pathExistsState(target, contract.affectedPaths);
+      const state = officialState(target, contract, plan.blueprint);
       if (state === "satisfied") outcome.skipped.push(step.id);
       else if (state === "different") {
         outcome.conflicts.push(step.id);
-        if (await conflictDecision(step, options.overwrite, interactive) === "overwrite") {
-          runCommand(`${contract.command} --force`, target, step.title);
-          outcome.executed.push(step.id);
-        } else outcome.skipped.push(step.id);
+        // Start never invokes undocumented force behavior against an unknown
+        // official-looking directory. A v3 marker is the sole resumability proof.
+        fail(`Existing official-like files have no matching Start v3 state marker. Preserve them or choose a new target; ${step.id} cannot be overwritten.`);
       } else {
         runCommand(contract.command, target, step.title);
         outcome.executed.push(step.id);
       }
       continue;
     }
+    if (step.id === "record-start-state") {
+      const official = plan.steps.find((candidate) => candidate.id === "official-shadcn-init")?.command;
+      if (!official) fail("The execution plan is missing its official template contract.");
+      await applyFiles(target, step, { ".start/v3-state.json": `${JSON.stringify({ version: 3, blueprint: plan.blueprint, officialCommand: official.command }, null, 2)}\n` }, options.overwrite, interactive, outcome);
+      continue;
+    }
     if (step.id === "start-agent-instructions") {
       await applyFiles(target, step, agentFiles, options.overwrite, interactive, outcome);
       continue;
     }
-    if (step.id === "start-quality" || step.id === "start-ci" || step.id.startsWith("capability-")) {
-      const id = step.id === "start-quality" ? "quality" : step.id === "start-ci" ? "ci" : step.id.slice("capability-".length);
+    if (step.id === "start-project-contracts" || step.id === "start-quality" || step.id === "start-ci" || step.id.startsWith("capability-")) {
+      const id = step.id === "start-project-contracts" ? "project-contracts" : step.id === "start-quality" ? "quality" : step.id === "start-ci" ? "ci" : step.id.slice("capability-".length);
       const scoped = scopedStartFiles(startFiles, id, agentFiles);
       if (step.id === "start-quality") await applyQuality(target, step, scoped, toolingManifest, options.overwrite, interactive, outcome);
       else if (Object.keys(scoped).length) await applyFiles(target, step, scoped, options.overwrite, interactive, outcome);
@@ -277,13 +324,18 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
         if (await conflictDecision(step, options.overwrite, interactive) === "preserve") outcome.skipped.push(step.id);
         else { installSkills(plan, target); outcome.executed.push(step.id); }
       } else { installSkills(plan, target); outcome.executed.push(step.id); }
+      continue;
     }
+    if (step.id === "install-dependencies" || step.id === "install-browser") {
+      if (options.skipInstall) outcome.skipped.push(step.id);
+      else if (!step.command) fail(`The execution plan is missing ${step.id}'s command.`);
+      else { runCommand(step.command.command, target, step.title); outcome.executed.push(step.id); }
+      continue;
+    }
+    if (step.id === "verify-readiness") continue;
+    if (step.id === "record-readiness") continue;
+    if (step.id === "initialize-git") continue;
   }
-
-  if (!options.skipInstall) {
-    runCommand({ npm: "npm install", pnpm: "pnpm install", yarn: "yarn install", bun: "bun install" }[config.packageManager], target, "Installing project dependencies");
-    outcome.executed.push("install-dependencies");
-  } else outcome.skipped.push("install-dependencies");
 
   const verification = plan.steps.find((step) => step.id === "verify-readiness");
   if (!verification) fail("The execution plan is missing readiness verification.");
@@ -295,9 +347,19 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
     outcome[verificationFailed ? "skipped" : "executed"].push(verification.id);
   } else outcome.skipped.push(verification.id);
 
-  writeFiles(target, { "START_READINESS.md": renderReadinessReport({ plan, executed: outcome.executed, skipped: outcome.skipped, conflicts: outcome.conflicts, resolvedVersions: plannedVersions(target), verification: { command: plan.verification.command, status: verificationStatus } }) });
+  if (options.skipInstall) outcome.warnings.push("Dependencies and verification were skipped; this workspace is not ready until a full run succeeds.");
+  const readinessStep = plan.steps.find((step) => step.id === "record-readiness");
+  if (!readinessStep) fail("The execution plan is missing the readiness report step.");
+  // The matching state marker proves this is Start's mutable execution record;
+  // it is deliberately refreshed on each resumable run rather than treated as
+  // user configuration.
+  writeFiles(target, { "START_READINESS.md": renderReadinessReport({ plan, executed: outcome.executed, skipped: outcome.skipped, conflicts: outcome.conflicts, resolvedVersions: resolvedVersions(target), verification: { command: plan.verification.command, status: verificationStatus, details: options.skipInstall ? "Not ready: --skip-install bypassed dependency installation and verification." : undefined }, warnings: outcome.warnings }) });
+  outcome.executed.push(readinessStep.id);
   if (verificationFailed) fail(`${verification.title} failed. START_READINESS.md records the failed verification; the workspace was preserved for inspection and retry.`);
+  const gitStep = plan.steps.find((step) => step.id === "initialize-git");
+  if (!gitStep) fail("The execution plan is missing Git initialization.");
   initializeGit(target);
+  outcome.executed.push(gitStep.id);
   return outcome;
 }
 

@@ -8,7 +8,8 @@ import {
   type DesignId,
   type DesignReferenceV1,
   type TypographyToken,
-} from "./core.js";
+} from "./design-contracts.js";
+// Design reference parsing remains an internal build module in v3.
 
 export const BUNDLED_DESIGN_COMMIT = "8147538b4226ae41e2487a9179e3bcc1f68e8554";
 
