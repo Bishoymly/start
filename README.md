@@ -73,4 +73,17 @@ The CLI and planner tests cover the portable v3 contract. An opt-in release suit
 START_LIVE_GOLDEN=1 npm test
 ```
 
+## Releasing
+
+Releases use npm trusted publishing through GitHub Actions, so the workflow does not need an npm token or a manual one-time password.
+
+After the npm trusted publisher is configured for this repository, merge a version and changelog update to `main`, then either run **Publish package** from the Actions tab on `main` or create and push the matching tag:
+
+```bash
+git tag v<version>
+git push origin v<version>
+```
+
+The workflow rejects manual runs outside `main` and tags that do not match the package version.
+
 Start is released under the [MIT License](./LICENSE).
