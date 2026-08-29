@@ -1,85 +1,72 @@
 # Start
 
-Build an agent-ready Next.js workspace without spending the first hour reconciling tools, instructions, and verification scripts.
+Start turns an empty folder into a verified, agent-ready Next.js repository in one reviewable run.
 
-Start turns one reviewed blueprint into a deterministic scaffold: strict TypeScript, Tailwind CSS v4, shadcn/ui source components, agent instructions, selected services, tests, CI, and a single `verify` command.
-
-```bash
-pnpm dlx @bishoymly/start@latest
-```
-
-[Build a blueprint in the web builder](https://bishoy.io/start) · [View curated recipes](https://bishoy.io/start/recipes) · [Open the npm package](https://www.npmjs.com/package/@bishoymly/start)
-
-## Two ways to start
-
-Run the guided terminal flow:
-
-```bash
-pnpm dlx @bishoymly/start@latest
-```
-
-Or review the stack visually, share it with a teammate, and copy the exact command:
+It is a repository-readiness orchestrator, not a product template. Start calls the official shadcn CLI, preserves the chosen preset, and then adds only the durable tooling and infrastructure selected in a portable blueprint. It never invents a product page, navigation, database entities, dashboards, uploads, chats, or a first task.
 
 ```bash
 pnpm dlx @bishoymly/start@latest --web
 ```
 
-Commands copied from the web builder are deterministic and non-interactive:
+[Build a blueprint](https://bishoy.io/start) · [View the source](https://github.com/Bishoymly/start) · [Open the npm package](https://www.npmjs.com/package/@bishoymly/start)
+
+## Review before writing
+
+Every v3 blueprint resolves to the same ordered execution plan in the web builder and CLI. Inspect it without changing a directory:
 
 ```bash
-pnpm dlx @bishoymly/start@latest my-app --blueprint v2.<token>
+pnpm dlx @bishoymly/start@latest my-app --blueprint v3.<token> --plan
 ```
 
-## What the generated workspace includes
+The plan distinguishes official commands from Start-owned configuration, and lists:
 
-Start writes only the integrations selected in the blueprint. A typical project begins with:
+- The selected shadcn preset and official initialization command.
+- Project-local skills and the selected coding agents.
+- Environment-variable contracts and capability requirements.
+- Quality, browser, CI, and production-build verification steps.
+- Compatibility warnings and any unavailable capabilities.
 
-```text
-my-app/
-├── app/                         Next.js App Router surface
-├── components/ui/               shadcn/ui source components
-├── .agents/commands/            implement, verify, review, ship-check
-├── .github/workflows/verify.yml optional CI contract
-├── AGENTS.md                    shared agent workflow and safety rules
-├── APP_BLUEPRINT.md             portable stack and delivery contract
-├── DESIGN.md                    optional pinned design reference
-├── .env.example                 selected service variables only
-├── README.md                    setup and architecture notes
-└── package.json                 one portable verify command
+Run the reviewed plan when you are ready:
+
+```bash
+pnpm dlx @bishoymly/start@latest my-app --blueprint v3.<token>
 ```
 
-The blueprint can add Biome or ESLint with Prettier, Vitest, Playwright, OpenTelemetry, Sentry, Better Auth, Drizzle or Prisma, storage, AI providers, and GitHub or GitLab CI. It also produces a tailored kickoff prompt for Codex, Claude Code, Cursor, GitHub Copilot, Gemini CLI, OpenCode, Windsurf, or Grok Build.
+Fresh runs intentionally use current upstream tools. The generated readiness report records the versions actually resolved, the steps executed or skipped, warnings, and verification results.
 
-## Why Start
+## What Start owns
 
-| Tool | Best at | Start adds |
-| --- | --- | --- |
-| `create-next-app` | A fast official Next.js baseline | Agent instructions, reviewed service choices, delivery workflows, and a portable blueprint |
-| T3 / opinionated stacks | A proven fixed stack | Independent choices for auth, data, storage, AI, observability, testing, and CI |
-| Template repositories | Reusing one known architecture | A deterministic scaffold generated from the exact choices your team reviewed |
+Start orchestrates the official [shadcn CLI](https://ui.shadcn.com/docs/cli) rather than copying its templates. After the official template is in place, Start can configure a focused baseline:
 
-Start is deliberately not a package installer disguised as architecture. The blueprint records why the workspace exists, what is selected, what is not selected, and how both humans and agents verify changes.
+- strict TypeScript; Biome or ESLint with Prettier
+- Vitest, Playwright with Chromium, and one `verify` command that includes the production build
+- CI that runs that exact verification command
+- `AGENTS.md`, native entry points for selected agents, full project-local skills, and browser-verification guidance
+- optional database/migration, authentication, storage, AI-provider, observability, and deployment plumbing
 
-## Safety and reproducibility
+Conditional capabilities create durable framework layers, dependencies, commands, and environment contracts only. Unselected capabilities do not leak files, dependencies, or variables into the result.
 
-- Refuses to overwrite non-empty directories.
-- Rejects absolute paths and parent traversal.
-- Decodes imported shadcn preset commands as data; it never executes pasted commands.
-- Writes and installs only selected integrations.
-- Supports `--skip-install` while still producing the complete workspace contract.
-- Installs the pinned Chromium browser when Playwright is selected so `verify` is ready to run.
+## Convergent and safe
 
-Blueprint v1 is intentionally unsupported in v0.4. Rebuild older configurations in the [web builder](https://bishoy.io/start).
+Start checks a command or capability's postcondition on reruns:
+
+1. Missing state is applied.
+2. Matching state is skipped.
+3. Differing state becomes one coherent conflict decision.
+
+Interactive runs can preserve or explicitly overwrite that scoped configuration. Non-interactive runs stop on a conflict unless overwrite was explicitly authorized. Path traversal and symbolic-link escapes are rejected before writing.
+
+When the readiness report is clean, the generated repository is ready for product work—but the agent instructions deliberately say to await a PRD or requirements before implementing product behavior.
 
 ## Development
 
-Start requires Node.js 20 or newer.
+Start requires Node.js 20 or later.
 
 ```bash
 npm install
 npm test
 ```
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Product direction is tracked in [ROADMAP.md](./ROADMAP.md), and release changes in [CHANGELOG.md](./CHANGELOG.md).
+The CLI and planner tests cover the portable v3 contract. Live release verification additionally exercises representative empty-directory repositories with current upstream tooling.
 
-Start is released under the [MIT License](./LICENSE). Security reports should follow [SECURITY.md](./SECURITY.md).
+Start is released under the [MIT License](./LICENSE).
