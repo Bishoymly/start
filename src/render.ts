@@ -21,6 +21,7 @@ export type RenderReadinessReportArgs = {
   conflicts?: readonly string[];
   resolvedVersions?: Readonly<Record<string, string>>;
   verification?: ReadinessVerification;
+  warnings?: readonly string[];
 };
 
 const packageCommands = {
@@ -71,7 +72,7 @@ export function createStartToolingManifest(config: StarterConfigV3): StartToolin
     addDependency(devDependencies, "drizzle-kit", "^0.31.4");
     addDependency(devDependencies, "dotenv", "^17.2.2");
     if (config.databaseProvider === "neon") addDependency(dependencies, "@neondatabase/serverless", "^1.0.2");
-    else addDependency(dependencies, "pg", "^8.16.3");
+    else { addDependency(dependencies, "pg", "^8.16.3"); addDependency(devDependencies, "@types/pg", "^8.15.5"); }
     Object.assign(scripts, { "db:generate": "drizzle-kit generate", "db:migrate": "drizzle-kit migrate" });
   }
   if (config.databaseRequired && config.orm === "prisma") {
@@ -176,7 +177,7 @@ function renderQualityFiles(config: StarterConfigV3): Record<string, string> {
   }
   if (config.testing.includes("playwright")) {
     files["playwright.config.ts"] = `import { defineConfig, devices } from \"@playwright/test\";\nexport default defineConfig({ testDir: \"./tests/e2e\", webServer: { command: \"${packageLauncher(config, "next dev")} --port 3107\", url: \"http://127.0.0.1:3107\", reuseExistingServer: !process.env.CI }, use: { baseURL: \"http://127.0.0.1:3107\", trace: \"on-first-retry\" }, projects: [{ name: \"chromium\", use: { ...devices[\"Desktop Chrome\"] } }] });\n`;
-    files["tests/e2e/readiness.spec.ts"] = "import { expect, test } from \"@playwright/test\";\n\ntest(\"official starter is reachable\", async ({ page }) => {\n  await page.goto(\"/\");\n  await expect(page.locator(\"body\")).toBeVisible();\n});\n";
+    files["tests/e2e/readiness.spec.ts"] = "import { expect, test } from \"@playwright/test\";\n\ntest(\"official starter is reachable, responsive, and keyboard-safe\", async ({ page }) => {\n  await page.emulateMedia({ reducedMotion: \"reduce\" });\n  for (const viewport of [{ width: 320, height: 720 }, { width: 1440, height: 900 }]) {\n    await page.setViewportSize(viewport);\n    await page.goto(\"/\");\n    await expect(page.locator(\"body\")).toBeVisible();\n    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);\n  }\n  await page.keyboard.press(\"Tab\");\n  await expect.poll(() => page.evaluate(() => document.activeElement !== document.body)).toBe(true);\n});\n";
   }
   return files;
 }
@@ -194,12 +195,19 @@ function renderCapabilityLayers(config: StarterConfigV3): Record<string, string>
   const files: Record<string, string> = {};
   if (config.databaseRequired && config.orm === "drizzle") {
     files["lib/db/schema.ts"] = "// Start intentionally creates no product tables. Add domain tables only after requirements are accepted.\nexport {};\n";
+    files["lib/db/client.ts"] = "import { drizzle } from \"drizzle-orm/node-postgres\";\nimport { Pool } from \"pg\";\n\nexport function createDatabaseClient() {\n  const url = process.env.DATABASE_URL;\n  if (!url) throw new Error(\"DATABASE_URL is required to create the database client.\");\n  return drizzle(new Pool({ connectionString: url }));\n}\n";
+    files["drizzle/.gitkeep"] = "";
     files["drizzle.config.ts"] = "import \"dotenv/config\";\nimport { defineConfig } from \"drizzle-kit\";\nconst url = process.env.DATABASE_URL;\nif (!url) throw new Error(\"DATABASE_URL is required for Drizzle commands.\");\nexport default defineConfig({ schema: \"./lib/db/schema.ts\", out: \"./drizzle\", dialect: \"postgresql\", dbCredentials: { url } });\n";
   }
-  if (config.databaseRequired && config.orm === "prisma") files["prisma/schema.prisma"] = "generator client {\n  provider = \"prisma-client\"\n  output = \"../lib/generated/prisma\"\n}\n\ndatasource db {\n  provider = \"postgresql\"\n}\n\n// Start intentionally creates no product models. Add domain models after requirements are accepted.\n";
+  if (config.databaseRequired && config.orm === "prisma") {
+    files["prisma/schema.prisma"] = "generator client {\n  provider = \"prisma-client\"\n  output = \"../lib/generated/prisma\"\n}\n\ndatasource db {\n  provider = \"postgresql\"\n}\n\n// Start intentionally creates no product models. Add domain models after requirements are accepted.\n";
+    files["lib/db/client.ts"] = "import { PrismaClient } from \"@/lib/generated/prisma/client\";\n\nexport const db = new PrismaClient();\n";
+    files["prisma/migrations/.gitkeep"] = "";
+  }
   if (config.authentication === "better-auth") {
-    files["lib/auth.ts"] = "import { betterAuth } from \"better-auth\";\n\n// Framework configuration only. Product authorization policies belong to requirement-backed server boundaries.\nexport const auth = betterAuth({});\n";
+    files["lib/auth.ts"] = "import { betterAuth } from \"better-auth\";\n\n// Framework configuration only. Product authorization policies belong to requirement-backed server boundaries.\nexport const auth = betterAuth({ emailAndPassword: { enabled: true } });\n";
     files["lib/auth-session.ts"] = "import { auth } from \"@/lib/auth\";\n\nexport async function getSession(headers: Headers) {\n  return auth.api.getSession({ headers });\n}\n";
+    files["app/api/auth/[...all]/route.ts"] = "import { auth } from \"@/lib/auth\";\nimport { toNextJsHandler } from \"better-auth/next-js\";\n\nexport const { GET, POST } = toNextJsHandler(auth);\n";
   }
   if (config.storage !== "none") files["lib/storage/index.ts"] = `export const storageProvider = \"${config.storage}\" as const;\n\n// Add requirement-backed upload and download policies here; Start creates no file routes or sample assets.\n`;
   if (config.aiProviders.length) files["lib/ai/providers.ts"] = `export const selectedAiProviders = ${JSON.stringify(config.aiProviders)} as const;\n\n// Add requirement-backed model calls here; Start creates no chat routes, prompts, or UI.\n`;
@@ -241,5 +249,5 @@ export function renderReadinessReport(args: RenderReadinessReportArgs): string {
   const versions = Object.entries(args.resolvedVersions ?? {});
   const verification = args.verification ?? { command: args.plan.verification.command, status: "pending" as const };
   const list = (items: readonly string[]) => items.length ? items.map((item) => `- \`${item}\``).join("\n") : "- None";
-  return `# Start readiness report\n\nGenerated by @bishoymly/start v${START_VERSION}.\n\n## Executed steps\n\n${list(args.executed)}\n\n## Skipped steps\n\n${list(args.skipped)}\n\n## Conflicts\n\n${list(args.conflicts ?? [])}\n\n## Resolved versions\n\n${versions.length ? versions.map(([name, version]) => `- \`${name}\`: ${version}`).join("\n") : "- Not recorded yet"}\n\n## Verification\n\n- Command: \`${verification.command}\`\n- Status: ${verification.status}${verification.details ? `\n- Details: ${verification.details}` : ""}\n\n## Next action\n\nRepository readiness is infrastructure only. Await a PRD, accepted requirements, or an explicit user task before adding product pages, routes, entities, dashboards, uploads, chats, navigation, or sample data.\n`;
+  return `# Start readiness report\n\nGenerated by @bishoymly/start v${START_VERSION}.\n\n## Executed steps\n\n${list(args.executed)}\n\n## Skipped steps\n\n${list(args.skipped)}\n\n## Conflicts\n\n${list(args.conflicts ?? [])}\n\n## Warnings\n\n${list(args.warnings ?? [])}\n\n## Resolved versions\n\n${versions.length ? versions.map(([name, version]) => `- \`${name}\`: ${version}`).join("\n") : "- Not recorded yet"}\n\n## Verification\n\n- Command: \`${verification.command}\`\n- Status: ${verification.status}${verification.details ? `\n- Details: ${verification.details}` : ""}\n\n## Next action\n\nRepository readiness is infrastructure only. Await a PRD, accepted requirements, or an explicit user task before adding product pages, routes, entities, dashboards, uploads, chats, navigation, or sample data.\n`;
 }

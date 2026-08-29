@@ -93,7 +93,35 @@ test("CLI fails safely on a Start-owned conflict unless overwrite is explicit", 
   assert.equal(conflict.status, 1);
   assert.match(conflict.stderr, /Conflicting configuration for Add durable agent instructions/);
   assert.equal(readFileSync(agents, "utf8"), "user-owned conflict\n");
-  const overwrite = run(root, [...args, "--overwrite"], { skipExecution: true });
+  const overwrite = run(root, [...args, "--overwrite", "start-agent-instructions"], { skipExecution: true });
   assert.equal(overwrite.status, 0, overwrite.stderr);
   assert.notEqual(readFileSync(agents, "utf8"), "user-owned conflict\n");
+});
+
+test("CLI rejects an unknown official-like target and every planned symlink write", (context) => {
+  const root = mkdtempSync(join(tmpdir(), "start-symlink-output-"));
+  const app = join(root, "app");
+  mkdirSync(app);
+  mkdirSync(join(app, "components"));
+  writeFileSync(join(app, "components.json"), "{}\n");
+  const unknown = run(root, ["app", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /state marker/);
+
+  const target = join(root, "safe");
+  mkdirSync(target);
+  const outside = join(root, "outside-agents.md");
+  writeFileSync(outside, "outside\n");
+  try { symlinkSync(outside, join(target, "AGENTS.md")); } catch { context.skip("File symlinks are unavailable in this environment."); return; }
+  const linked = run(root, ["safe", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
+  assert.equal(linked.status, 1);
+  assert.match(linked.stderr, /symbolic link/);
+  assert.equal(readFileSync(outside, "utf8"), "outside\n");
+});
+
+test("a missing installer-produced skill file fails even through the no-network command seam", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-skills-missing-"));
+  const result = run(root, ["app", "--blueprint", tokenFor()], { skipExecution: true });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /without producing every expected project-local skill file/);
 });
