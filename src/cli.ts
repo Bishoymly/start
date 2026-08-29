@@ -16,20 +16,22 @@ import {
 } from "./core.js";
 import {
   renderAgentEntryPoints,
-  renderPlanMarkdown,
   renderReadinessReport,
   renderStartOwnedFiles,
   START_VERSION,
   createStartToolingManifest,
   type StartToolingManifest,
 } from "./render.js";
-import { collectInteractiveWizardState, renderSplash, TerminalPrompter } from "./interactive.js";
+import { bootstrapEnvironment } from "./bootstrap.js";
+import { collectInteractiveWizardState, renderPlanPreview, renderSplash, TerminalPrompter } from "./interactive.js";
 
 const webBuilderUrl = "https://bishoy.io/start";
+const useColor = Boolean(stdout.isTTY && !process.env.NO_COLOR);
 
 type FileState = "absent" | "satisfied" | "different";
 type Outcome = { executed: string[]; skipped: string[]; conflicts: string[]; warnings: string[] };
 type StartState = { version: 3; blueprint: string; officialCommand: string };
+type CommandProgress = { current: number; total: number };
 
 function fail(message: string): never {
   console.error(`\nStart generation stopped: ${message}`);
@@ -135,15 +137,23 @@ async function conflictDecision(step: ExecutionPlanStep, overwrite: Set<string>,
   }
 }
 
-function runCommand(command: string, cwd: string, label: string, allowFailure = false): boolean {
+function runCommand(command: string, cwd: string, label: string, options: { allowFailure?: boolean; environment?: NodeJS.ProcessEnv; progress?: CommandProgress } = {}): boolean {
+  if (options.progress) {
+    options.progress.current += 1;
+    const position = `${String(options.progress.current).padStart(2, "0")}/${String(options.progress.total).padStart(2, "0")}`;
+    console.log(`\n  ━━ ${position}  ${label}`);
+    console.log(`     ↳ ${command}`);
+  } else {
+    console.log(`\n  ━━ ${label}`);
+    console.log(`     ↳ ${command}`);
+  }
   if (process.env.START_TEST_SKIP_EXECUTION === "1") {
     console.log(`Test seam: skipped ${label}.`);
     return true;
   }
-  console.log(`\n${label}: ${command}`);
-  const result = spawnSync(command, { cwd, shell: true, stdio: "inherit" });
+  const result = spawnSync(command, { cwd, shell: true, stdio: "inherit", env: { ...process.env, ...options.environment } });
   if (result.status !== 0) {
-    if (allowFailure) return false;
+    if (options.allowFailure) return false;
     fail(`${label} failed. The workspace was preserved for inspection and retry.`);
   }
   return true;
@@ -260,11 +270,11 @@ async function applyQuality(target: string, step: ExecutionPlanStep, files: Reco
   outcome.executed.push(step.id);
 }
 
-function installSkills(plan: ExecutionPlanV3, target: string): void {
+function installSkills(plan: ExecutionPlanV3, target: string, progress: CommandProgress): void {
   if (process.env.START_TEST_SKILL_OUTPUTS === "1") {
     writeFiles(target, Object.fromEntries(plan.skills.flatMap((skill) => skill.expectedPaths.map((path) => [path, "# test-only installed skill\n"]))));
   }
-  for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`);
+  for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`, { progress });
   if (pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
     fail("The official Skills CLI completed without producing every expected project-local skill file.");
   }
@@ -273,6 +283,10 @@ function installSkills(plan: ExecutionPlanV3, target: string): void {
 async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
   const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
   const interactive = Boolean(stdin.isTTY && stdout.isTTY && !options.blueprint);
+  const commandProgress: CommandProgress = {
+    current: 0,
+    total: 1 + (options.skipInstall ? 0 : plan.skills.length + plan.steps.filter((step) => step.id === "install-dependencies" || step.id === "install-browser").length + 1),
+  };
   const startFiles = renderStartOwnedFiles(config, plan);
   const agentFiles = renderAgentEntryPoints(config);
   const toolingManifest = createStartToolingManifest(config);
@@ -291,7 +305,11 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
       } else {
         // shadcn creates <cwd>/<name>. Run it from the parent so the known app
         // name resolves to the target itself instead of a nested app/app folder.
-        runCommand(contract.command, dirname(target), step.title);
+        // shadcn currently writes a pnpm-workspace.yaml for its generated
+        // single-package app. Its nested `pnpm add` then targets that root,
+        // which is correct but otherwise rejected by pnpm's safety check.
+        // Scope the exception to bootstrap and inherit it into shadcn's child.
+        runCommand(contract.command, dirname(target), step.title, { environment: bootstrapEnvironment(config.packageManager), progress: commandProgress });
         // The no-network test seam does not synthesize upstream output.
         // Production shadcn creates this directory itself.
         if (!existsSync(target)) mkdirSync(target, { recursive: true });
@@ -327,14 +345,14 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
       else if (state === "different") {
         outcome.conflicts.push(step.id);
         if (await conflictDecision(step, options.overwrite, interactive) === "preserve") outcome.skipped.push(step.id);
-        else { installSkills(plan, target); outcome.executed.push(step.id); }
-      } else { installSkills(plan, target); outcome.executed.push(step.id); }
+        else { installSkills(plan, target, commandProgress); outcome.executed.push(step.id); }
+      } else { installSkills(plan, target, commandProgress); outcome.executed.push(step.id); }
       continue;
     }
     if (step.id === "install-dependencies" || step.id === "install-browser") {
       if (options.skipInstall) outcome.skipped.push(step.id);
       else if (!step.command) fail(`The execution plan is missing ${step.id}'s command.`);
-      else { runCommand(step.command.command, target, step.title); outcome.executed.push(step.id); }
+      else { runCommand(step.command.command, target, step.title, { progress: commandProgress }); outcome.executed.push(step.id); }
       continue;
     }
     if (step.id === "verify-readiness") continue;
@@ -347,7 +365,7 @@ async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: s
   let verificationStatus: "pending" | "passed" | "failed" = "pending";
   let verificationFailed = false;
   if (!options.skipInstall && process.env.START_TEST_SKIP_EXECUTION !== "1") {
-    verificationFailed = !runCommand(plan.verification.command, target, verification.title, true);
+    verificationFailed = !runCommand(plan.verification.command, target, verification.title, { allowFailure: true, progress: commandProgress });
     verificationStatus = verificationFailed ? "failed" : "passed";
     outcome[verificationFailed ? "skipped" : "executed"].push(verification.id);
   } else outcome.skipped.push(verification.id);
@@ -384,7 +402,7 @@ async function main(): Promise<void> {
     try {
       config = resolveV3Config(await collectInteractiveWizardState(prompter, options.target));
       const review = buildExecutionPlan(config);
-      console.log(`\n${renderPlanMarkdown(review)}`);
+      stdout.write(renderPlanPreview(review, useColor));
       planAlreadyPrinted = true;
       if (options.planOnly || !(await prompter.confirm("executePlan", "Execute this plan now?", true))) return;
     } finally {
@@ -396,7 +414,7 @@ async function main(): Promise<void> {
   }
   const target = checkTarget(realpathSync(process.cwd()), config.projectName);
   const plan = buildExecutionPlan(config);
-  if (!planAlreadyPrinted) console.log(renderPlanMarkdown(plan));
+  if (!planAlreadyPrinted) stdout.write(renderPlanPreview(plan, useColor));
   if (options.planOnly) return;
   const outcome = await execute(config, plan, target, options);
   console.log(`\nReadiness report written to ${resolve(target, "START_READINESS.md")}.`);

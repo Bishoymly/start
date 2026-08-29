@@ -41,6 +41,8 @@ test("CLI plan-only prints the v3 ordered plan without creating a target", () =>
   assert.match(result.stdout, /--template next/);
   assert.match(result.stdout, /Install selected project skills/);
   assert.match(result.stdout, /Verify repository readiness/);
+  assert.match(result.stdout, /◆ REVIEW/);
+  assert.doesNotMatch(result.stdout, /^#|^###|^- ID:/m);
   assert.equal(existsSync(join(root, "apps")), false);
 });
 
@@ -80,6 +82,8 @@ test("CLI executes the v3 plan through the no-network test seam and reports read
   assert.equal(existsSync(join(root, "app", "AGENTS.md")), true);
   assert.equal(existsSync(join(root, "app", "START_READINESS.md")), true);
   assert.match(readFileSync(join(root, "app", "START_READINESS.md"), "utf8"), /Await a PRD|requirements/i);
+  assert.match(result.stdout, /━━ 01\/01  Initialize the official shadcn template/);
+  assert.match(result.stdout, /↳ pnpm dlx shadcn@latest init/);
   assert.match(result.stdout, /Test seam: skipped Initialize the official shadcn template/);
   assert.match(result.stdout, /Skipped:.*install-project-skills/);
 });

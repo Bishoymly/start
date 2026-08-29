@@ -2,6 +2,12 @@
 
 All notable changes to Start are documented here.
 
+## [0.6.1] - 2026-08-29
+
+- Added a filled, gradient START splash plus colored wizard prompts and a compact terminal plan review.
+- Added numbered execution progress lines before every external command.
+- Fixed pnpm shadcn bootstrap when the generated app is a workspace root.
+
 ## [0.4.0] - 2026-08-21
 
 - Added a complete guided terminal builder aligned with the web blueprint flow.
@@ -12,3 +18,4 @@ All notable changes to Start are documented here.
 - Added Playwright browser installation and a generated portable `verify` contract.
 
 [0.4.0]: https://github.com/bishoymly/start/releases/tag/v0.4.0
+[0.6.1]: https://github.com/bishoymly/start/releases/tag/v0.6.1

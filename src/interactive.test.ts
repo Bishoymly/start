@@ -1,25 +1,39 @@
 import assert from "node:assert/strict";
 import { Readable, Writable } from "node:stream";
 import test from "node:test";
-import { resolveV3Config } from "./core.js";
-import { collectInteractiveWizardState, interactiveQuestionIds, renderSplash, TerminalPrompter, type InteractivePrompter, type PromptChoice } from "./interactive.js";
+import { buildExecutionPlan, createDefaultState, resolveV3Config } from "./core.js";
+import { collectInteractiveWizardState, interactiveQuestionIds, renderPlanPreview, renderSplash, TerminalPrompter, type InteractivePrompter, type PromptChoice } from "./interactive.js";
 
-test("interactive splash uses a compact Claude-style welcome panel", () => {
+const stripAnsi = (value: string) => value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+
+test("interactive splash uses a colored filled START block logo", () => {
   const splash = renderSplash("1.2.3");
-  assert.match(splash, /✦  START  v1\.2\.3/);
-  assert.match(splash, /Answer once · review the plan · verify it\./);
-  const borderedLines = splash.split("\n").filter((line) => line.startsWith("╭") || line.startsWith("│") || line.startsWith("╰"));
-  assert.equal(new Set(borderedLines.map((line) => [...line].length)).size, 1);
+  const plain = stripAnsi(splash);
+  assert.match(splash, /\u001B\[38;2;/);
+  assert.match(plain, /███████╗/);
+  assert.match(plain, /v1\.2\.3/);
+  assert.match(plain, /Build an agent-ready Next\.js workspace\./);
 });
 
-test("terminal prompts render a familiar question and resolved answer", async () => {
+test("terminal prompts use colored questions and resolved answers", async () => {
   let output = "";
   const sink = new Writable({ write(chunk, _encoding, callback) { output += chunk.toString(); callback(); } });
   const prompter = new TerminalPrompter(Readable.from(["\n"]), sink);
   assert.equal(await prompter.text("projectName", "What should we call your app?", "my-app"), "my-app");
   prompter.close();
-  assert.match(output, /◇  What should we call your app\?/);
-  assert.match(output, /◆  my-app/);
+  assert.match(output, /\u001B\[38;5;45m\?/);
+  assert.match(stripAnsi(output), /\? What should we call your app\?/);
+  assert.match(stripAnsi(output), /✓ my-app/);
+});
+
+test("terminal review is a compact colored command list, not Markdown", () => {
+  const plan = buildExecutionPlan(resolveV3Config(createDefaultState()));
+  const preview = renderPlanPreview(plan);
+  const plain = stripAnsi(preview);
+  assert.match(plain, /◆ REVIEW/);
+  assert.match(plain, /01 › Initialize the official shadcn template/);
+  assert.match(plain, /\$ pnpm dlx shadcn@latest init/);
+  assert.doesNotMatch(plain, /^#|^###|^- ID:/m);
 });
 
 class RecordingPrompter implements InteractivePrompter {

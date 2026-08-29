@@ -1,6 +1,7 @@
 import { createInterface, type Interface as ReadlineInterface } from "node:readline/promises";
 import { stdin as defaultInput, stdout as defaultOutput } from "node:process";
 import type { Readable, Writable } from "node:stream";
+import type { ExecutionPlanV3 } from "./core.js";
 import {
   agents,
   agentLabels,
@@ -45,6 +46,20 @@ export const interactiveQuestionIds = [
 ] as const;
 
 const choices = <T extends string>(values: readonly T[], labels: Partial<Record<T, string>> = {}): PromptChoice<T>[] => values.map((value) => ({ value, label: labels[value] ?? value }));
+
+const reset = "\u001B[0m";
+const paint = (code: string, value: string) => `\u001B[${code}m${value}${reset}`;
+const bold = (value: string) => paint("1", value);
+const blue = (value: string) => paint("38;5;81", value);
+const cyan = (value: string) => paint("38;5;45", value);
+const green = (value: string) => paint("38;5;78", value);
+const yellow = (value: string) => paint("38;5;221", value);
+const muted = (value: string) => paint("38;5;245", value);
+const stripAnsi = (value: string) => value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+
+function logoLine(line: string, color: [number, number, number]): string {
+  return `\u001B[38;2;${color.join(";")}m${line}${reset}`;
+}
 
 async function validText(prompter: InteractivePrompter, id: string, message: string, defaultValue: string, validate: (value: string) => boolean, error: string): Promise<string> {
   while (true) {
@@ -152,21 +167,21 @@ export class TerminalPrompter implements InteractivePrompter {
   }
 
   note(message: string): void {
-    this.#output.write(`│  ${message}\n`);
+    this.#output.write(`  ${yellow("!")} ${yellow(message)}\n`);
   }
 
   section(title: string): void {
-    this.#output.write(`\n┌  ${title.toUpperCase()}\n`);
+    this.#output.write(`\n${cyan("━━")} ${bold(cyan(title.toUpperCase()))}\n`);
   }
 
   #resolved(value: string): void {
-    this.#output.write(`◆  ${value}\n`);
+    this.#output.write(`  ${green("✓")} ${green(value)}\n`);
   }
 
   async text(_id: string, message: string, defaultValue: string): Promise<string> {
-    this.#output.write(`◇  ${message}\n`);
+    this.#output.write(`\n${cyan("?")} ${bold(message)}\n`);
     const suffix = defaultValue ? ` [${defaultValue}]` : "";
-    const answer = await this.#readline.question(`└  Enter a value${suffix} › `);
+    const answer = await this.#readline.question(`  ${blue("›")} ${muted(`Enter a value${suffix}`)} `);
     const value = answer.trim() || defaultValue;
     this.#resolved(value);
     return value;
@@ -175,9 +190,12 @@ export class TerminalPrompter implements InteractivePrompter {
   async select<T extends string>(_id: string, message: string, options: readonly PromptChoice<T>[], defaultValue: T): Promise<T> {
     const defaultIndex = Math.max(0, options.findIndex((option) => option.value === defaultValue));
     while (true) {
-      this.#output.write(`\n◇  ${message}\n`);
-      options.forEach((option, index) => this.#output.write(`│  ${index === defaultIndex ? "●" : "○"} ${index + 1}. ${option.label}${index === defaultIndex ? " (recommended)" : ""}\n`));
-      const answer = (await this.#readline.question(`└  Select [${defaultIndex + 1}] › `)).trim();
+      this.#output.write(`\n${cyan("?")} ${bold(message)}\n`);
+      options.forEach((option, index) => {
+        const selected = index === defaultIndex;
+        this.#output.write(`  ${selected ? cyan("●") : muted("○")} ${muted(`${index + 1}.`)} ${selected ? bold(option.label) : option.label}${selected ? ` ${muted("(recommended)")}` : ""}\n`);
+      });
+      const answer = (await this.#readline.question(`  ${blue("›")} ${muted(`Select [${defaultIndex + 1}]`)} `)).trim();
       if (!answer) {
         this.#resolved(options[defaultIndex].label);
         return options[defaultIndex].value;
@@ -194,10 +212,14 @@ export class TerminalPrompter implements InteractivePrompter {
   async multiSelect<T extends string>(_id: string, message: string, options: readonly PromptChoice<T>[], defaultValues: readonly T[]): Promise<T[]> {
     const defaultIndexes = defaultValues.map((value) => options.findIndex((option) => option.value === value)).filter((index) => index >= 0);
     while (true) {
-      this.#output.write(`\n◇  ${message}\n`);
-      options.forEach((option, index) => this.#output.write(`│  ${defaultIndexes.includes(index) ? "◼" : "◻"} ${index + 1}. ${option.label}${defaultIndexes.includes(index) ? " (selected)" : ""}\n`));
+      this.#output.write(`\n${cyan("?")} ${bold(message)}\n`);
+      options.forEach((option, index) => {
+        const selected = defaultIndexes.includes(index);
+        this.#output.write(`  ${selected ? cyan("◼") : muted("◻")} ${muted(`${index + 1}.`)} ${selected ? bold(option.label) : option.label}${selected ? ` ${muted("(selected)")}` : ""}\n`);
+      });
       const fallback = defaultIndexes.map((index) => index + 1).join(",");
-      const answer = (await this.#readline.question(`└  Select comma-separated values${fallback ? ` [${fallback}]` : " (Enter for none)"} › `)).trim();
+      const prompt = `Select comma-separated values${fallback ? ` [${fallback}]` : " (Enter for none)"}`;
+      const answer = (await this.#readline.question(`  ${blue("›")} ${muted(prompt)} `)).trim();
       if (!answer) {
         const selected = defaultIndexes.map((index) => options[index]);
         this.#resolved(selected.length ? selected.map((option) => option.label).join(", ") : "None");
@@ -215,7 +237,7 @@ export class TerminalPrompter implements InteractivePrompter {
 
   async confirm(_id: string, message: string, defaultValue: boolean): Promise<boolean> {
     while (true) {
-      const answer = (await this.#readline.question(`◇  ${message} ${defaultValue ? "[Y/n]" : "[y/N]"} › `)).trim().toLowerCase();
+      const answer = (await this.#readline.question(`\n${cyan("?")} ${bold(message)} ${muted(defaultValue ? "[Y/n]" : "[y/N]")} ${blue("›")} `)).trim().toLowerCase();
       if (!answer) {
         this.#resolved(defaultValue ? "Yes" : "No");
         return defaultValue;
@@ -236,12 +258,33 @@ export class TerminalPrompter implements InteractivePrompter {
 export function renderSplash(version = "0.5.0"): string {
   return [
     "",
-    "╭──────────────────────────────────────────────────╮",
-    `│  ✦  START  v${version.padEnd(37)}│`,
-    "│                                                  │",
-    "│     Build an agent-ready Next.js workspace.      │",
-    "│     Answer once · review the plan · verify it.   │",
-    "╰──────────────────────────────────────────────────╯",
+    logoLine(" ███████╗ ████████╗  █████╗  ██████╗  ████████╗", [127, 136, 255]),
+    logoLine(" ██╔════╝ ╚══██╔══╝ ██╔══██╗ ██╔══██╗ ╚══██╔══╝", [113, 147, 255]),
+    logoLine(" ███████╗    ██║    ███████║ ██████╔╝    ██║", [98, 159, 255]),
+    logoLine(" ╚════██║    ██║    ██╔══██║ ██╔══██╗    ██║", [83, 170, 255]),
+    logoLine(" ███████║    ██║    ██║  ██║ ██║  ██║    ██║", [68, 180, 255]),
+    logoLine(" ╚══════╝    ╚═╝    ╚═╝  ╚═╝ ╚═╝  ╚═╝    ╚═╝", [78, 168, 255]),
+    `  ${bold(blue(`v${version}`))} ${muted("Build an agent-ready Next.js workspace.")}`,
     "",
   ].join("\n");
+}
+
+/** Compact terminal review; durable project records stay in START_PLAN.md. */
+export function renderPlanPreview(plan: ExecutionPlanV3, useColor = true): string {
+  const steps = plan.steps.map((step, index) => {
+    const command = step.command ? `\n     ${muted("$ ")}${yellow(step.command.command)}` : "";
+    return `  ${cyan(`${String(index + 1).padStart(2, "0")} ›`)} ${bold(step.title)}${command}`;
+  });
+  const warnings = plan.warnings.length ? `\n\n  ${yellow("!")} ${plan.warnings.map((warning) => muted(warning)).join(`\n  ${yellow("!")} `)}` : "";
+  const preview = [
+    "",
+    `  ${blue("◆")} ${bold("REVIEW")}`,
+    `  ${muted("Blueprint")} ${cyan("v3")}`,
+    `  ${muted("────────────────────────────────────────")}`,
+    steps.join("\n\n"),
+    `\n  ${green("✓")} ${bold("Verify")} ${yellow(plan.verification.command)}`,
+    warnings,
+    "",
+  ].join("\n");
+  return useColor ? preview : stripAnsi(preview);
 }
