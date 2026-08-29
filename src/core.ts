@@ -604,3 +604,437 @@ export function buildAgentKickoffPrompt(config: StarterConfigV2): string {
   const sources = config.designReference ? "AGENTS.md, APP_BLUEPRINT.md, DESIGN.md, and README.md" : "AGENTS.md, APP_BLUEPRINT.md, and README.md";
   return `Read ${sources} before editing. Confirm the generated baseline is healthy, then ${task.charAt(0).toLowerCase()}${task.slice(1)}. Preserve the selected ${config.shadcnPreset.style} shadcn preset and ${config.startingSurface} starting surface. Do not add unselected providers or infrastructure. Add focused tests, run ${config.packageManager} run verify, and report the exact results and any remaining risks.`;
 }
+
+// v3 is intentionally separate from the v2 compatibility surface above. The
+// old renderer and terminal flow are migrated independently; keeping their
+// types here for one release avoids forcing consumers to update atomically.
+// New CLI and web code must use the V3 exports below.
+
+export const blueprintVersion = 3 as const;
+
+export type WizardStageV3 = "project" | "agents" | "preset" | "infrastructure" | "quality" | "review";
+export const wizardStagesV3: readonly WizardStageV3[] = ["project", "agents", "preset", "infrastructure", "quality", "review"];
+
+export interface WizardStateV3 {
+  version: 3;
+  stage: WizardStageV3;
+  projectName: Decision<string>;
+  targetDirectory: Decision<string>;
+  primaryAgent: Decision<AgentId>;
+  additionalAgents: Decision<AgentId[]>;
+  packageManager: Decision<PackageManager>;
+  tooling: Decision<ToolingChoice>;
+  codeHost: Decision<CodeHost>;
+  uiFoundation: Decision<UiFoundation>;
+  shadcnPreset: Decision<ShadcnPreset>;
+  authentication: Decision<AuthChoice>;
+  authMethods: Decision<AuthMethod[]>;
+  databaseRequired: Decision<boolean>;
+  databaseProvider: Decision<DatabaseProvider>;
+  orm: Decision<OrmChoice>;
+  storage: Decision<StorageChoice>;
+  aiProviders: Decision<AiProvider[]>;
+  hosting: Decision<HostingChoice>;
+  ciEnabled: Decision<boolean>;
+  vitest: Decision<boolean>;
+  playwright: Decision<boolean>;
+  opentelemetry: Decision<boolean>;
+  sentry: Decision<boolean>;
+  dormant: Partial<{
+    databaseProvider: Decision<DatabaseProvider>;
+    orm: Decision<OrmChoice>;
+    hostingChoices: Partial<Record<HostingChoice, { databaseProvider: Decision<DatabaseProvider>; storage: Decision<StorageChoice> }>>;
+  }>;
+}
+
+export interface StarterConfigV3 {
+  version: 3;
+  projectName: string;
+  targetDirectory: string;
+  primaryAgent: AgentId;
+  additionalAgents: AgentId[];
+  packageManager: PackageManager;
+  tooling: ToolingChoice;
+  codeHost: CodeHost;
+  ciEnabled: boolean;
+  ci: CiChoice;
+  uiFoundation: UiFoundation;
+  shadcnPreset: ShadcnPreset;
+  authentication: AuthChoice;
+  authMethods: AuthMethod[];
+  databaseRequired: boolean;
+  databaseProvider?: DatabaseProvider;
+  orm?: OrmChoice;
+  storage: StorageChoice;
+  aiProviders: AiProvider[];
+  hosting: HostingChoice;
+  testing: TestingChoice[];
+  observability: ObservabilityChoice[];
+}
+
+export interface V3RecommendationResult {
+  state: WizardStateV3;
+  changed: string[];
+  reasons: string[];
+}
+
+export interface ValidationResult {
+  errors: string[];
+  warnings: string[];
+}
+
+export type Postcondition = "absent" | "satisfied" | "different";
+export type ConflictPolicy = "prompt" | "preserve" | "overwrite";
+export type PlanStepKind = "official-command" | "start-configuration" | "skill-install" | "verification";
+export type PlanStepOwner = "official" | "start" | "user";
+
+export interface CommandContract {
+  command: string;
+  postcondition: Postcondition;
+  conflictPolicy: ConflictPolicy;
+  affectedPaths: string[];
+}
+
+export interface ExecutionPlanStep {
+  id: string;
+  kind: PlanStepKind;
+  owner: PlanStepOwner;
+  title: string;
+  description: string;
+  command?: CommandContract;
+  operations?: string[];
+  capabilities?: string[];
+}
+
+export interface SkillContract {
+  id: string;
+  source: string;
+  agents: AgentId[];
+  projectScope: true;
+  expectedPaths: string[];
+  installCommand: string;
+}
+
+export interface EnvironmentContract {
+  name: string;
+  purpose: string;
+  required: boolean;
+  capability: string;
+}
+
+export interface CapabilityContract {
+  id: string;
+  status: "available" | "unavailable";
+  description: string;
+  requires: string[];
+  excludesProductBehavior: true;
+}
+
+export interface VerificationContract {
+  command: string;
+  checks: string[];
+  awaitRequirements: true;
+}
+
+export interface ExecutionPlanV3 {
+  version: 3;
+  blueprint: string;
+  steps: ExecutionPlanStep[];
+  skills: SkillContract[];
+  environment: EnvironmentContract[];
+  capabilities: CapabilityContract[];
+  verification: VerificationContract;
+  warnings: string[];
+}
+
+const v3KnownKeys = new Set<keyof WizardStateV3>([
+  "version", "stage", "projectName", "targetDirectory", "primaryAgent", "additionalAgents", "packageManager", "tooling", "codeHost", "uiFoundation", "shadcnPreset", "authentication", "authMethods", "databaseRequired", "databaseProvider", "orm", "storage", "aiProviders", "hosting", "ciEnabled", "vitest", "playwright", "opentelemetry", "sentry", "dormant",
+]);
+
+/** Create the v3 builder state. It deliberately contains no presentation or product decisions. */
+export function createDefaultState(): WizardStateV3 {
+  return {
+    version: 3,
+    stage: "project",
+    projectName: recommended("my-app"),
+    targetDirectory: recommended("my-app"),
+    primaryAgent: recommended("codex"),
+    additionalAgents: recommended([]),
+    packageManager: recommended("pnpm"),
+    tooling: recommended("biome"),
+    codeHost: recommended("github"),
+    uiFoundation: recommended("base-ui"),
+    shadcnPreset: recommended(defaultShadcnPreset),
+    authentication: recommended("none"),
+    authMethods: recommended(["email-password"]),
+    databaseRequired: recommended(false),
+    databaseProvider: recommended("neon"),
+    orm: recommended("drizzle"),
+    storage: recommended("none"),
+    aiProviders: recommended([]),
+    hosting: recommended("vercel"),
+    ciEnabled: recommended(true),
+    vitest: recommended(true),
+    playwright: recommended(true),
+    opentelemetry: recommended(false),
+    sentry: recommended(false),
+    dormant: {},
+  };
+}
+
+export function recommendationForV3(state: WizardStateV3, key: keyof WizardStateV3): unknown {
+  if (key === "databaseRequired") return state.authentication.value === "better-auth";
+  if (key === "databaseProvider") return recommendedDatabaseByHosting[state.hosting.value];
+  if (key === "orm") return "drizzle";
+  return (createDefaultState() as unknown as Record<string, Decision<unknown>>)[key]?.value;
+}
+
+export function recomputeRecommendationsV3(input: WizardStateV3): V3RecommendationResult {
+  const state = structuredClone(input);
+  const changed: string[] = [];
+  const reasons: string[] = [];
+  if (state.authentication.value === "better-auth") {
+    state.authMethods = setRecommended(state.authMethods, ["email-password"], "Sign-in methods", changed);
+    state.databaseRequired = setRecommended(state.databaseRequired, true, "Database requirement", changed);
+    state.databaseProvider = setRecommended(state.databaseProvider, recommendedDatabaseByHosting[state.hosting.value], "Database provider", changed);
+    state.orm = setRecommended(state.orm, "drizzle", "ORM", changed);
+    reasons.push("Better Auth requires a database and recommends email/password with Drizzle until the user chooses otherwise.");
+  } else {
+    state.databaseRequired = setRecommended(state.databaseRequired, false, "Database requirement", changed);
+  }
+  const supportedDatabases = databaseOptionsByHosting[state.hosting.value];
+  if (!supportedDatabases.includes(state.databaseProvider.value)) {
+    state.dormant.databaseProvider = state.databaseProvider;
+    state.databaseProvider = recommended(recommendedDatabaseByHosting[state.hosting.value]);
+    changed.push("Database provider");
+  }
+  const supportedStorage = storageOptionsByHosting[state.hosting.value];
+  if (!supportedStorage.includes(state.storage.value)) {
+    state.storage = recommended("none");
+    changed.push("Storage");
+  }
+  reasons.push(`${state.hosting.value} limits database and storage choices to its supported contracts.`);
+  return { state, changed, reasons };
+}
+
+export function setV3UserDecision<K extends Exclude<keyof WizardStateV3, "version" | "stage" | "dormant">>(state: WizardStateV3, key: K, value: WizardStateV3[K] extends Decision<infer T> ? T : never): V3RecommendationResult {
+  const next = structuredClone(state);
+  const previousHosting = next.hosting.value;
+  (next[key] as Decision<unknown>) = { value, source: "user" };
+  if (key === "projectName" && next.targetDirectory.source === "recommended") next.targetDirectory = recommended(String(value));
+  if (key === "databaseRequired") {
+    if (!value) {
+      next.dormant.databaseProvider = next.databaseProvider;
+      next.dormant.orm = next.orm;
+    } else {
+      next.databaseProvider = next.dormant.databaseProvider ?? next.databaseProvider;
+      next.orm = next.dormant.orm ?? next.orm;
+    }
+  }
+  if (key === "hosting") {
+    next.dormant.hostingChoices ??= {};
+    next.dormant.hostingChoices[previousHosting] = { databaseProvider: state.databaseProvider, storage: state.storage };
+    const restored = next.dormant.hostingChoices[value as HostingChoice];
+    next.databaseProvider = restored?.databaseProvider ?? recommended(recommendedDatabaseByHosting[value as HostingChoice]);
+    next.storage = restored?.storage ?? recommended("none");
+  }
+  return recomputeRecommendationsV3(next);
+}
+
+export function useV3Recommendation<K extends Exclude<keyof WizardStateV3, "version" | "stage" | "dormant">>(state: WizardStateV3, key: K): V3RecommendationResult {
+  const next = structuredClone(state);
+  const defaults = createDefaultState();
+  (next[key] as Decision<unknown>) = structuredClone(defaults[key] as Decision<unknown>);
+  if (key === "targetDirectory") next.targetDirectory.value = next.projectName.value;
+  return recomputeRecommendationsV3(next);
+}
+
+function v3Clouds(config: Pick<StarterConfigV3, "databaseRequired" | "databaseProvider" | "storage" | "aiProviders">): Set<string> {
+  const lookup: Record<string, string> = {
+    "vercel-blob": "Vercel", "vercel-ai-gateway": "Vercel", r2: "Cloudflare",
+    "azure-blob": "Azure", "azure-postgresql": "Azure", "azure-openai": "Azure",
+    s3: "AWS", "aws-rds": "AWS", bedrock: "AWS", gcs: "GCP", "gcp-cloud-sql": "GCP", vertex: "GCP",
+  };
+  return new Set([config.storage, config.databaseRequired ? config.databaseProvider ?? "" : "", ...config.aiProviders].flatMap((choice) => lookup[choice] ? [lookup[choice]] : []));
+}
+
+export function validateV3Config(config: StarterConfigV3): ValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (config.version !== 3) errors.push("Blueprint must use schema version 3.");
+  if (!isValidProjectName(config.projectName)) errors.push("Project name must use 1–50 lowercase letters, numbers, or hyphens.");
+  if (!isValidTargetDirectory(config.targetDirectory)) errors.push("Target folder must be a safe relative path without spaces, backslashes, or parent-directory segments.");
+  if (!agents.includes(config.primaryAgent) || !config.additionalAgents.every((agent) => agents.includes(agent))) errors.push("Blueprint includes an unsupported agent.");
+  if (!isShadcnPreset(config.shadcnPreset)) errors.push("The shadcn preset is invalid. Import it again from ui.shadcn.com/create.");
+  if (config.authentication === "better-auth" && (!config.databaseRequired || !config.databaseProvider || !config.orm || config.authMethods.length === 0)) errors.push("Better Auth requires a database, ORM, and at least one sign-in method.");
+  if (!config.databaseRequired && (config.databaseProvider || config.orm)) errors.push("Inactive database choices must be omitted from a v3 blueprint.");
+  if (config.databaseRequired && (!config.databaseProvider || !config.orm)) errors.push("Database setup requires a provider and ORM.");
+  if (config.databaseRequired && config.databaseProvider && !databaseOptionsByHosting[config.hosting].includes(config.databaseProvider)) errors.push("The selected database is not supported by the selected host.");
+  if (!storageOptionsByHosting[config.hosting].includes(config.storage)) errors.push("The selected storage is not supported by the selected host.");
+  if (config.ci !== deriveCi(config.codeHost)) errors.push("Blueprint CI does not match its code host.");
+  const selectedClouds = v3Clouds(config);
+  if (selectedClouds.size > 1) warnings.push(`This selection spans ${[...selectedClouds].join(", ")}. It is supported, but may add latency, credentials, and billing surfaces.`);
+  return { errors, warnings };
+}
+
+export function validateV3State(state: WizardStateV3): ValidationResult {
+  if (state.version !== 3 || !wizardStagesV3.includes(state.stage)) return { errors: ["Builder state is not a v3 state."], warnings: [] };
+  return validateV3Config(resolveV3Config(state, false));
+}
+
+/** Normalize builder decisions into the portable, source-independent v3 blueprint. */
+export function resolveV3Config(state: WizardStateV3, validate = true): StarterConfigV3 {
+  const config: StarterConfigV3 = {
+    version: 3,
+    projectName: state.projectName.value,
+    targetDirectory: state.targetDirectory.value,
+    primaryAgent: state.primaryAgent.value,
+    additionalAgents: [...new Set(state.additionalAgents.value.filter((agent) => agent !== state.primaryAgent.value))],
+    packageManager: state.packageManager.value,
+    tooling: state.tooling.value,
+    codeHost: state.codeHost.value,
+    ciEnabled: state.ciEnabled.value,
+    ci: deriveCi(state.codeHost.value),
+    uiFoundation: state.uiFoundation.value,
+    shadcnPreset: structuredClone(state.shadcnPreset.value),
+    authentication: state.authentication.value,
+    authMethods: state.authentication.value === "better-auth" ? [...new Set(state.authMethods.value)] : [],
+    databaseRequired: state.databaseRequired.value,
+    ...(state.databaseRequired.value ? { databaseProvider: state.databaseProvider.value, orm: state.orm.value } : {}),
+    storage: state.storage.value,
+    aiProviders: [...new Set(state.aiProviders.value)],
+    hosting: state.hosting.value,
+    testing: [state.vitest.value ? "vitest" as const : null, state.playwright.value ? "playwright" as const : null].filter((choice): choice is TestingChoice => choice !== null),
+    observability: [state.opentelemetry.value ? "opentelemetry" as const : null, state.sentry.value ? "sentry" as const : null].filter((choice): choice is ObservabilityChoice => choice !== null),
+  };
+  if (validate) {
+    const result = validateV3Config(config);
+    if (result.errors.length) throw new Error(result.errors.join(" "));
+  }
+  return config;
+}
+
+function v3Valid(value: unknown, choices: readonly string[]): boolean {
+  return typeof value === "string" && choices.includes(value);
+}
+
+function v3StringArray(value: unknown, choices: readonly string[]): value is string[] {
+  return Array.isArray(value) && value.every((item) => v3Valid(item, choices));
+}
+
+/** Decode a breaking v3 blueprint; v1/v2 tokens cannot accidentally invoke the orchestrator. */
+export function decodeV3Blueprint(token: string): StarterConfigV3 {
+  if (token.length > 32_000) throw new Error("Blueprint token is oversized.");
+  if (token.startsWith("v1.") || token.startsWith("v2.")) throw new Error("Blueprint v3 is required. Rebuild this blueprint at https://bishoy.io/start.");
+  if (!token.startsWith("v3.")) throw new Error("Unsupported blueprint token.");
+  let raw: unknown;
+  try { raw = JSON.parse(fromBase64Url(token.slice(3))); } catch { throw new Error("Blueprint token is malformed."); }
+  if (!raw || typeof raw !== "object") throw new Error("Blueprint schema is not supported.");
+  const candidate = raw as Record<string, unknown>;
+  if (candidate.version !== 3 || Object.keys(candidate).some((key) => ![
+    "version", "projectName", "targetDirectory", "primaryAgent", "additionalAgents", "packageManager", "tooling", "codeHost", "ciEnabled", "ci", "uiFoundation", "shadcnPreset", "authentication", "authMethods", "databaseRequired", "databaseProvider", "orm", "storage", "aiProviders", "hosting", "testing", "observability",
+  ].includes(key))) throw new Error("Blueprint schema is not supported.");
+  if (!v3Valid(candidate.projectName, []) && typeof candidate.projectName !== "string") throw new Error("Blueprint contains an invalid project name.");
+  if (!v3Valid(candidate.targetDirectory, []) && typeof candidate.targetDirectory !== "string") throw new Error("Blueprint contains an invalid target folder.");
+  if (!v3Valid(candidate.primaryAgent, agents) || !v3StringArray(candidate.additionalAgents, agents)
+    || !v3Valid(candidate.packageManager, ["npm", "pnpm", "yarn", "bun"])
+    || !v3Valid(candidate.tooling, ["biome", "eslint-prettier"])
+    || !v3Valid(candidate.codeHost, ["github", "gitlab", "azure-devops", "undecided"])
+    || typeof candidate.ciEnabled !== "boolean"
+    || !v3Valid(candidate.ci, ["github-actions", "gitlab-ci", "azure-pipelines"])
+    || !v3Valid(candidate.uiFoundation, ["base-ui", "radix-ui"])
+    || !isShadcnPreset(candidate.shadcnPreset)
+    || !v3Valid(candidate.authentication, ["none", "better-auth"])
+    || !v3StringArray(candidate.authMethods, ["email-password", "github", "google", "microsoft"])
+    || typeof candidate.databaseRequired !== "boolean"
+    || !v3Valid(candidate.storage, ["none", "vercel-blob", "s3", "r2", "azure-blob", "gcs", "supabase-storage"])
+    || !v3StringArray(candidate.aiProviders, ["openai", "anthropic", "google", "azure-openai", "bedrock", "vertex", "vercel-ai-gateway"])
+    || !v3Valid(candidate.hosting, ["vercel", "cloudflare", "azure", "aws", "gcp", "docker"])
+    || !v3StringArray(candidate.testing, ["vitest", "playwright"])
+    || !v3StringArray(candidate.observability, ["opentelemetry", "sentry"])) throw new Error("Blueprint contains an unsupported configuration value.");
+  if (candidate.databaseProvider !== undefined && !v3Valid(candidate.databaseProvider, ["neon", "supabase", "docker", "existing-url", "azure-postgresql", "aws-rds", "gcp-cloud-sql"])) throw new Error("Blueprint contains an unsupported database provider.");
+  if (candidate.orm !== undefined && !v3Valid(candidate.orm, ["drizzle", "prisma"])) throw new Error("Blueprint contains an unsupported ORM.");
+  const config = candidate as unknown as StarterConfigV3;
+  const result = validateV3Config(config);
+  if (result.errors.length) throw new Error(result.errors.join(" "));
+  return config;
+}
+
+export function encodeV3Blueprint(config: StarterConfigV3): string {
+  const result = validateV3Config(config);
+  if (result.errors.length) throw new Error(result.errors.join(" "));
+  return `v3.${toBase64Url(JSON.stringify(config))}`;
+}
+
+function commandLauncher(packageManager: PackageManager): string {
+  return { npm: "npx", pnpm: "pnpm dlx", yarn: "yarn dlx", bun: "bunx" }[packageManager];
+}
+
+export function buildV3StarterCommand(config: StarterConfigV3, options: { planOnly?: boolean } = {}): string {
+  return `${commandLauncher(config.packageManager)} @bishoymly/start@latest ${config.targetDirectory} --blueprint ${encodeV3Blueprint(config)}${options.planOnly ? " --plan" : ""}`;
+}
+
+function agentSet(config: StarterConfigV3): AgentId[] {
+  return [config.primaryAgent, ...config.additionalAgents];
+}
+
+function environmentForV3(config: StarterConfigV3): EnvironmentContract[] {
+  const result: EnvironmentContract[] = [];
+  const add = (name: string, purpose: string, required: boolean, capability: string) => result.push({ name, purpose, required, capability });
+  if (config.databaseRequired) add("DATABASE_URL", "Connection string for the selected database.", true, "database");
+  if (config.authentication === "better-auth") {
+    add("BETTER_AUTH_SECRET", "Secret used to sign authentication sessions.", true, "authentication");
+    add("BETTER_AUTH_URL", "Public base URL used by Better Auth.", true, "authentication");
+    for (const method of config.authMethods) {
+      const key = method === "email-password" ? null : method.toUpperCase();
+      if (key) { add(`${key}_CLIENT_ID`, `${method} OAuth client ID.`, true, "authentication"); add(`${key}_CLIENT_SECRET`, `${method} OAuth client secret.`, true, "authentication"); }
+    }
+  }
+  const storage: Partial<Record<StorageChoice, [string, string][]>> = {
+    "vercel-blob": [["BLOB_READ_WRITE_TOKEN", "Vercel Blob token."]], s3: [["S3_BUCKET", "S3 bucket name."], ["AWS_REGION", "AWS region."], ["AWS_ACCESS_KEY_ID", "AWS access key ID."], ["AWS_SECRET_ACCESS_KEY", "AWS secret access key."]], r2: [["R2_BUCKET", "Cloudflare R2 bucket name."], ["R2_ENDPOINT", "Cloudflare R2 endpoint."], ["R2_ACCESS_KEY_ID", "R2 access key ID."], ["R2_SECRET_ACCESS_KEY", "R2 secret access key."]], "azure-blob": [["AZURE_STORAGE_CONNECTION_STRING", "Azure Blob connection string."]], gcs: [["GCS_BUCKET", "Google Cloud Storage bucket name."], ["GOOGLE_APPLICATION_CREDENTIALS", "Google service-account credential path."]], "supabase-storage": [["SUPABASE_URL", "Supabase project URL."], ["SUPABASE_SERVICE_ROLE_KEY", "Supabase service role key."]],
+  };
+  for (const [name, purpose] of storage[config.storage] ?? []) add(name, purpose, true, "storage");
+  const ai: Partial<Record<AiProvider, [string, string][]>> = { openai: [["OPENAI_API_KEY", "OpenAI API key."]], anthropic: [["ANTHROPIC_API_KEY", "Anthropic API key."]], google: [["GOOGLE_GENERATIVE_AI_API_KEY", "Google AI API key."]], "azure-openai": [["AZURE_OPENAI_API_KEY", "Azure OpenAI API key."], ["AZURE_OPENAI_RESOURCE_NAME", "Azure OpenAI resource name."]], bedrock: [["AWS_REGION", "AWS region for Bedrock."]], vertex: [["GOOGLE_CLOUD_PROJECT", "Google Cloud project for Vertex AI."]], "vercel-ai-gateway": [["AI_GATEWAY_API_KEY", "Vercel AI Gateway API key."]] };
+  for (const provider of config.aiProviders) for (const [name, purpose] of ai[provider] ?? []) add(name, purpose, true, "ai");
+  if (config.observability.includes("opentelemetry")) add("OTEL_EXPORTER_OTLP_ENDPOINT", "OpenTelemetry collector endpoint.", false, "opentelemetry");
+  if (config.observability.includes("sentry")) { add("SENTRY_DSN", "Sentry DSN.", true, "sentry"); add("SENTRY_AUTH_TOKEN", "Sentry release-upload token.", false, "sentry"); }
+  return result;
+}
+
+function capabilitiesForV3(config: StarterConfigV3): CapabilityContract[] {
+  const result: CapabilityContract[] = [];
+  const add = (id: string, description: string, requires: string[]) => result.push({ id, status: "available", description, requires, excludesProductBehavior: true });
+  if (config.databaseRequired) add("database", `Empty ${config.orm} schema, client, and migration configuration for ${config.databaseProvider}.`, ["DATABASE_URL"]);
+  if (config.authentication === "better-auth") add("authentication", "Better Auth framework plumbing and server-side session helpers only.", ["DATABASE_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL"]);
+  if (config.storage !== "none") add("storage", `${config.storage} SDK and environment contract only.`, environmentForV3(config).filter((entry) => entry.capability === "storage").map((entry) => entry.name));
+  for (const provider of config.aiProviders) add(`ai:${provider}`, `${provider} SDK and environment contract only.`, environmentForV3(config).filter((entry) => entry.capability === "ai").map((entry) => entry.name));
+  for (const provider of config.observability) add(provider, `${provider} initialization and configuration only.`, environmentForV3(config).filter((entry) => entry.capability === provider).map((entry) => entry.name));
+  return result;
+}
+
+/** Build the exact ordered, serializable contract shared by plan preview and execution. */
+export function buildExecutionPlan(config: StarterConfigV3): ExecutionPlanV3 {
+  const validation = validateV3Config(config);
+  if (validation.errors.length) throw new Error(validation.errors.join(" "));
+  const base = config.uiFoundation === "base-ui" ? "base" : "radix";
+  const launcher = commandLauncher(config.packageManager);
+  const agents = agentSet(config);
+  const skills: SkillContract[] = [
+    { id: "design-taste-frontend", source: "leonxlnx/taste-skill", agents, projectScope: true, expectedPaths: [".agents/skills/design-taste-frontend/SKILL.md"], installCommand: `${launcher} skills add leonxlnx/taste-skill --skill design-taste-frontend --yes` },
+    { id: "browser-verification", source: "vercel-labs/agent-skills", agents, projectScope: true, expectedPaths: [".agents/skills/browser-verification/SKILL.md"], installCommand: `${launcher} skills add vercel-labs/agent-skills --skill browser-verification --yes` },
+  ];
+  const capabilities = capabilitiesForV3(config);
+  const steps: ExecutionPlanStep[] = [
+    { id: "official-shadcn-init", kind: "official-command", owner: "official", title: "Initialize the official shadcn template", description: "Runs the upstream CLI first and preserves every file it creates.", command: { command: `${launcher} shadcn@latest init --base ${base} --preset ${config.shadcnPreset.code} --yes`, postcondition: "absent", conflictPolicy: "prompt", affectedPaths: ["app", "components", "components.json", "package.json"] } },
+    { id: "start-agent-instructions", kind: "start-configuration", owner: "start", title: "Add durable agent instructions", description: "Adds AGENTS.md and selected native agent entry points; instructions require waiting for PRD or requirements.", operations: ["write AGENTS.md", "write selected native agent entry points"] },
+    { id: "start-quality", kind: "start-configuration", owner: "start", title: "Configure quality and browser verification", description: "Adds strict TypeScript, selected formatter/linter, Vitest, Playwright, browser guidance, and one verify command without changing official UI output.", operations: ["configure TypeScript", "configure formatter and linter", "configure tests", "configure verify command"] },
+    ...(config.ciEnabled ? [{ id: "start-ci", kind: "start-configuration" as const, owner: "start" as const, title: "Configure CI", description: `Adds ${config.ci} to run the same verify command used locally.`, operations: ["write CI workflow"] }] : []),
+    ...capabilities.map((capability) => ({ id: `capability-${capability.id.replaceAll(":", "-")}`, kind: "start-configuration" as const, owner: "start" as const, title: `Configure ${capability.id}`, description: capability.description, operations: ["add dependency and framework configuration", "document environment contract"], capabilities: [capability.id] })),
+    { id: "install-project-skills", kind: "skill-install", owner: "official", title: "Install selected project skills", description: "Uses the official Skills CLI at project scope and verifies installer-produced files and provenance.", operations: skills.map((skill) => skill.installCommand) },
+    { id: "verify-readiness", kind: "verification", owner: "start", title: "Verify repository readiness", description: "Runs formatting, linting, typecheck, unit tests, Playwright, production build, and records a readiness report.", command: { command: `${config.packageManager} run verify`, postcondition: "absent", conflictPolicy: "preserve", affectedPaths: ["START_READINESS.md"] } },
+  ];
+  return { version: 3, blueprint: encodeV3Blueprint(config), steps, skills, environment: environmentForV3(config), capabilities, verification: { command: `${config.packageManager} run verify`, checks: ["format", "lint", "typecheck", "unit tests", "Playwright", "production build"], awaitRequirements: true }, warnings: [...validation.warnings, "Repository readiness is complete only after verification succeeds. Await a PRD or requirements before product work."] };
+}
+
+/** Alias for consumers that use a noun-style API. */
+export const createExecutionPlan = buildExecutionPlan;

@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAgentKickoffPrompt,
+  buildExecutionPlan,
   buildStarterCommand,
+  buildV3StarterCommand,
+  createDefaultState,
   createDefaultWizardState,
+  decodeV3Blueprint,
   decodeBlueprint,
+  encodeV3Blueprint,
   encodeBlueprint,
   isValidProjectName,
   isValidTargetDirectory,
   parseShadcnPresetInput,
   recomputeRecommendations,
+  resolveV3Config,
   resolveStarterConfig,
+  setV3UserDecision,
   setUserDecision,
   useRecommendation,
   validateWizardState,
@@ -220,4 +227,65 @@ test("generation command follows the selected package manager and target folder"
     const command = buildStarterCommand(resolveStarterConfig(state));
     assert.equal(command.startsWith(`${launcher} @bishoymly/start@latest apps/web --blueprint v2.`), true);
   }
+});
+
+test("v3 defaults retain setup decisions and exclude product-shaping fields", () => {
+  const state = createDefaultState();
+  assert.equal(state.version, 3);
+  assert.equal(state.stage, "project");
+  assert.deepEqual(state.packageManager, { value: "pnpm", source: "recommended" });
+  assert.equal("startingSurface" in state, false);
+  assert.equal("designReference" in state, false);
+  assert.equal("firstTask" in state, false);
+  const config = resolveV3Config(state);
+  assert.equal(config.version, 3);
+  assert.equal("theme" in config, false);
+  assert.equal("motion" in config, false);
+});
+
+test("v3 blueprint round-trips exactly and rejects prior blueprint versions", () => {
+  let state = createDefaultState();
+  state = setV3UserDecision(state, "targetDirectory", "apps/web").state;
+  state = setV3UserDecision(state, "additionalAgents", ["claude-code", "codex"]).state;
+  const config = resolveV3Config(state);
+  const token = encodeV3Blueprint(config);
+  assert.match(token, /^v3\./);
+  assert.deepEqual(decodeV3Blueprint(token), config);
+  assert.throws(() => decodeV3Blueprint(`v2.${token.slice(3)}`), /v3 is required/);
+  assert.throws(() => decodeV3Blueprint("v3.not-base64"), /malformed/);
+});
+
+test("v3 normalized configs omit inactive capability choices", () => {
+  const config = resolveV3Config(createDefaultState());
+  assert.equal(config.databaseRequired, false);
+  assert.equal(config.databaseProvider, undefined);
+  assert.equal(config.orm, undefined);
+  assert.deepEqual(config.authMethods, []);
+});
+
+test("v3 plan is deterministic, starts with official shadcn, and exposes durable contracts", () => {
+  let state = createDefaultState();
+  state = setV3UserDecision(state, "authentication", "better-auth").state;
+  state = setV3UserDecision(state, "aiProviders", ["openai"]).state;
+  state = setV3UserDecision(state, "opentelemetry", true).state;
+  const config = resolveV3Config(state);
+  const plan = buildExecutionPlan(config);
+  assert.deepEqual(buildExecutionPlan(config), plan);
+  assert.equal(plan.steps[0]?.id, "official-shadcn-init");
+  assert.equal(plan.steps[0]?.owner, "official");
+  assert.match(plan.steps[0]?.command?.command ?? "", /shadcn@latest init/);
+  assert.deepEqual(plan.steps[0]?.command?.affectedPaths, ["app", "components", "components.json", "package.json"]);
+  assert.equal(plan.steps.some((step) => step.id === "install-project-skills"), true);
+  assert.equal(plan.environment.some((entry) => entry.name === "DATABASE_URL"), true);
+  assert.equal(plan.environment.some((entry) => entry.name === "OPENAI_API_KEY"), true);
+  assert.equal(plan.capabilities.every((capability) => capability.excludesProductBehavior), true);
+  assert.equal(plan.verification.awaitRequirements, true);
+  assert.match(plan.warnings.at(-1) ?? "", /Await a PRD/);
+});
+
+test("v3 plan-only command is the same invocation plus --plan", () => {
+  const config = resolveV3Config(createDefaultState());
+  const normal = buildV3StarterCommand(config);
+  const planOnly = buildV3StarterCommand(config, { planOnly: true });
+  assert.equal(planOnly, `${normal} --plan`);
 });
