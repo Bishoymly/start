@@ -4,35 +4,28 @@ import type { Readable, Writable } from "node:stream";
 import {
   agents,
   agentLabels,
-  createDefaultWizardState,
+  createDefaultState,
   databaseOptionsByHosting,
-  isValidFirstTask,
   isValidProjectName,
   isValidTargetDirectory,
   parseShadcnPresetInput,
-  recommendationFor,
-  recomputeRecommendations,
-  setUserDecision,
+  recomputeRecommendationsV3,
+  setV3UserDecision,
   storageOptionsByHosting,
   type AgentId,
   type AiProvider,
   type AuthMethod,
   type CodeHost,
   type DatabaseProvider,
-  type DesignId,
   type HostingChoice,
-  type MotionLevel,
   type OrmChoice,
   type PackageManager,
   type ShadcnPreset,
-  type StartingSurface,
   type StorageChoice,
-  type Theme,
   type ToolingChoice,
   type UiFoundation,
-  type WizardStateV2,
+  type WizardStateV3,
 } from "./core.js";
-import { getBundledDesignReference } from "./design.js";
 
 export type PromptChoice<T extends string> = { value: T; label: string };
 
@@ -45,10 +38,10 @@ export interface InteractivePrompter {
 }
 
 export const interactiveQuestionIds = [
-  "projectName", "targetDirectory", "packageManager", "tooling", "agents", "hosting", "codeHost",
-  "uiFoundation", "shadcnPreset", "startingSurface", "designReference", "theme", "motion",
+  "projectName", "targetDirectory", "packageManager", "tooling", "agents", "uiFoundation", "shadcnPreset",
+  "hosting", "codeHost",
   "authentication", "authMethods", "databaseRequired", "databaseProvider", "orm", "storage", "aiProviders",
-  "ciEnabled", "vitest", "playwright", "opentelemetry", "sentry", "firstTask",
+  "ciEnabled", "vitest", "playwright", "opentelemetry", "sentry",
 ] as const;
 
 const choices = <T extends string>(values: readonly T[], labels: Partial<Record<T, string>> = {}): PromptChoice<T>[] => values.map((value) => ({ value, label: labels[value] ?? value }));
@@ -69,57 +62,50 @@ async function nonEmptySelection<T extends string>(prompter: InteractivePrompter
   }
 }
 
-export async function collectInteractiveWizardState(prompter: InteractivePrompter, initialTargetDirectory?: string): Promise<WizardStateV2> {
-  let state = createDefaultWizardState();
+/**
+ * Collect only durable workspace decisions. Presentation and product questions
+ * intentionally belong in the PRD that follows workspace creation.
+ */
+export async function collectInteractiveWizardState(prompter: InteractivePrompter, initialTargetDirectory?: string): Promise<WizardStateV3> {
+  let state = createDefaultState();
 
   const projectName = await validText(prompter, "projectName", "Project name", state.projectName.value, isValidProjectName, "Use 1–50 lowercase letters, numbers, or hyphens.");
-  state = setUserDecision(state, "projectName", projectName).state;
+  state = setV3UserDecision(state, "projectName", projectName).state;
   const targetDefault = initialTargetDirectory ?? state.targetDirectory.value;
   const targetDirectory = await validText(prompter, "targetDirectory", "Target folder", targetDefault, isValidTargetDirectory, "Use a safe relative path without spaces, backslashes, or parent-directory segments.");
-  state = setUserDecision(state, "targetDirectory", targetDirectory).state;
+  state = setV3UserDecision(state, "targetDirectory", targetDirectory).state;
 
-  state = setUserDecision(state, "packageManager", await prompter.select<PackageManager>("packageManager", "Package manager", choices(["pnpm", "bun", "npm", "yarn"], { yarn: "Yarn", bun: "Bun" }), state.packageManager.value)).state;
-  state = setUserDecision(state, "tooling", await prompter.select<ToolingChoice>("tooling", "Code quality", choices(["biome", "eslint-prettier"], { biome: "Biome", "eslint-prettier": "ESLint + Prettier" }), state.tooling.value)).state;
+  state = setV3UserDecision(state, "packageManager", await prompter.select<PackageManager>("packageManager", "Package manager", choices(["pnpm", "bun", "npm", "yarn"], { yarn: "Yarn", bun: "Bun" }), state.packageManager.value)).state;
+  state = setV3UserDecision(state, "tooling", await prompter.select<ToolingChoice>("tooling", "Code quality", choices(["biome", "eslint-prettier"], { biome: "Biome", "eslint-prettier": "ESLint + Prettier" }), state.tooling.value)).state;
 
   const selectedAgents = await nonEmptySelection(prompter, "agents", "Coding agents", choices(agents, agentLabels), [state.primaryAgent.value, ...state.additionalAgents.value]);
-  state.primaryAgent = { value: selectedAgents[0] as AgentId, source: "user" };
-  state.additionalAgents = { value: selectedAgents.slice(1) as AgentId[], source: "user" };
+  state = setV3UserDecision(state, "primaryAgent", selectedAgents[0] as AgentId).state;
+  state = setV3UserDecision(state, "additionalAgents", selectedAgents.slice(1) as AgentId[]).state;
+  state.stage = "agents";
 
-  state = setUserDecision(state, "hosting", await prompter.select<HostingChoice>("hosting", "Hosting", choices(["vercel", "cloudflare", "azure", "aws", "gcp", "docker"], { vercel: "Vercel", cloudflare: "Cloudflare", azure: "Azure", aws: "AWS", gcp: "GCP", docker: "Docker" }), state.hosting.value)).state;
-  state = setUserDecision(state, "codeHost", await prompter.select<CodeHost>("codeHost", "Code host", choices(["github", "gitlab", "azure-devops", "undecided"], { github: "GitHub", gitlab: "GitLab", "azure-devops": "Azure DevOps", undecided: "Undecided" }), state.codeHost.value)).state;
+  state.stage = "preset";
 
-  state = setUserDecision(state, "uiFoundation", await prompter.select<UiFoundation>("uiFoundation", "shadcn foundation", choices(["base-ui", "radix-ui"], { "base-ui": "Base UI", "radix-ui": "Radix UI" }), state.uiFoundation.value)).state;
+  state = setV3UserDecision(state, "uiFoundation", await prompter.select<UiFoundation>("uiFoundation", "shadcn foundation", choices(["base-ui", "radix-ui"], { "base-ui": "Base UI", "radix-ui": "Radix UI" }), state.uiFoundation.value)).state;
   while (true) {
     const presetInput = await prompter.text("shadcnPreset", "shadcn preset code, init URL, or init command", state.shadcnPreset.value.code);
     try {
       const imported = parseShadcnPresetInput(presetInput);
-      state = setUserDecision(state, "shadcnPreset", imported.preset as ShadcnPreset).state;
-      if (imported.foundation) state = setUserDecision(state, "uiFoundation", imported.foundation).state;
+      state = setV3UserDecision(state, "shadcnPreset", imported.preset as ShadcnPreset).state;
+      if (imported.foundation) state = setV3UserDecision(state, "uiFoundation", imported.foundation).state;
       break;
     } catch (error) {
       prompter.note(error instanceof Error ? error.message : "That preset could not be imported.");
     }
   }
-  state = setUserDecision(state, "startingSurface", await prompter.select<StartingSurface>("startingSurface", "Starting surface", choices(["minimal", "top-nav", "sidebar"], { minimal: "Minimal canvas", "top-nav": "Top navigation", sidebar: "Sidebar app" }), state.startingSurface.value)).state;
+  state.stage = "infrastructure";
 
-  const design = await prompter.select<DesignId | "none">("designReference", "Design reference (optional)", choices(["none", "apple", "airbnb", "nike", "stripe", "linear", "notion", "spotify", "figma", "shopify", "wired"] as const, { none: "No design reference", apple: "Apple", airbnb: "Airbnb", nike: "Nike", stripe: "Stripe", linear: "Linear", notion: "Notion", spotify: "Spotify", figma: "Figma", shopify: "Shopify", wired: "WIRED" }), state.designReference.value ?? "none");
-  if (design === "none") {
-    state.designReference = { value: null, source: "user" };
-    state.designProvenance = null;
-    state = recomputeRecommendations(state).state;
-  } else {
-    const reference = getBundledDesignReference(design);
-    state.designReference = { value: design, source: "user" };
-    state.designProvenance = reference.source;
-    state = recomputeRecommendations(state).state;
-  }
-  state = setUserDecision(state, "theme", await prompter.select<Theme>("theme", "Theme", choices(["light", "dark", "system"], { light: "Light", dark: "Dark", system: "System" }), recommendationFor(state, "theme") as Theme)).state;
-  state = setUserDecision(state, "motion", await prompter.select<MotionLevel>("motion", "Motion level", choices(["off", "subtle", "expressive"], { off: "Off", subtle: "Subtle", expressive: "Expressive" }), recommendationFor(state, "motion") as MotionLevel)).state;
+  state = setV3UserDecision(state, "hosting", await prompter.select<HostingChoice>("hosting", "Hosting", choices(["vercel", "cloudflare", "azure", "aws", "gcp", "docker"], { vercel: "Vercel", cloudflare: "Cloudflare", azure: "Azure", aws: "AWS", gcp: "GCP", docker: "Docker" }), state.hosting.value)).state;
+  state = setV3UserDecision(state, "codeHost", await prompter.select<CodeHost>("codeHost", "Code host", choices(["github", "gitlab", "azure-devops", "undecided"], { github: "GitHub", gitlab: "GitLab", "azure-devops": "Azure DevOps", undecided: "Undecided" }), state.codeHost.value)).state;
 
-  state = setUserDecision(state, "authentication", await prompter.select<"none" | "better-auth">("authentication", "Authentication", choices(["none", "better-auth"], { none: "No authentication", "better-auth": "Better Auth" }), state.authentication.value)).state;
+  state = setV3UserDecision(state, "authentication", await prompter.select<"none" | "better-auth">("authentication", "Authentication", choices(["none", "better-auth"], { none: "No authentication", "better-auth": "Better Auth" }), state.authentication.value)).state;
   if (state.authentication.value === "better-auth") {
     const methods = await nonEmptySelection<AuthMethod>(prompter, "authMethods", "Sign-in methods", choices(["email-password", "github", "google", "microsoft"], { "email-password": "Email & password", github: "GitHub", google: "Google", microsoft: "Microsoft" }), state.authMethods.value);
-    state = setUserDecision(state, "authMethods", methods).state;
+    state = setV3UserDecision(state, "authMethods", methods).state;
   }
 
   while (true) {
@@ -128,26 +114,27 @@ export async function collectInteractiveWizardState(prompter: InteractivePrompte
       prompter.note("Better Auth requires a database.");
       continue;
     }
-    state = setUserDecision(state, "databaseRequired", databaseRequired).state;
+    state = setV3UserDecision(state, "databaseRequired", databaseRequired).state;
     break;
   }
   if (state.databaseRequired.value) {
     const databaseOptions = databaseOptionsByHosting[state.hosting.value];
-    state = setUserDecision(state, "databaseProvider", await prompter.select<DatabaseProvider>("databaseProvider", "Postgres provider", choices(databaseOptions, { neon: "Neon", supabase: "Supabase", docker: "Docker", "existing-url": "Existing URL", "azure-postgresql": "Azure PostgreSQL", "aws-rds": "AWS RDS", "gcp-cloud-sql": "GCP Cloud SQL" }), state.databaseProvider.value)).state;
-    state = setUserDecision(state, "orm", await prompter.select<OrmChoice>("orm", "ORM", choices(["drizzle", "prisma"], { drizzle: "Drizzle", prisma: "Prisma" }), state.orm.value)).state;
+    state = setV3UserDecision(state, "databaseProvider", await prompter.select<DatabaseProvider>("databaseProvider", "Postgres provider", choices(databaseOptions, { neon: "Neon", supabase: "Supabase", docker: "Docker", "existing-url": "Existing URL", "azure-postgresql": "Azure PostgreSQL", "aws-rds": "AWS RDS", "gcp-cloud-sql": "GCP Cloud SQL" }), state.databaseProvider.value)).state;
+    state = setV3UserDecision(state, "orm", await prompter.select<OrmChoice>("orm", "ORM", choices(["drizzle", "prisma"], { drizzle: "Drizzle", prisma: "Prisma" }), state.orm.value)).state;
   }
   const storageOptions = storageOptionsByHosting[state.hosting.value];
-  state = setUserDecision(state, "storage", await prompter.select<StorageChoice>("storage", "Object storage", choices(storageOptions, { none: "None", "vercel-blob": "Vercel Blob", s3: "Amazon S3", r2: "Cloudflare R2", "azure-blob": "Azure Blob", gcs: "Google Cloud Storage", "supabase-storage": "Supabase Storage" }), state.storage.value)).state;
-  state = setUserDecision(state, "aiProviders", await prompter.multiSelect<AiProvider>("aiProviders", "AI providers", choices(["openai", "anthropic", "google", "azure-openai", "bedrock", "vertex", "vercel-ai-gateway"], { openai: "OpenAI", anthropic: "Anthropic", google: "Google", "azure-openai": "Azure OpenAI", bedrock: "Amazon Bedrock", vertex: "Google Vertex", "vercel-ai-gateway": "Vercel AI Gateway" }), state.aiProviders.value)).state;
+  state = setV3UserDecision(state, "storage", await prompter.select<StorageChoice>("storage", "Object storage", choices(storageOptions, { none: "None", "vercel-blob": "Vercel Blob", s3: "Amazon S3", r2: "Cloudflare R2", "azure-blob": "Azure Blob", gcs: "Google Cloud Storage", "supabase-storage": "Supabase Storage" }), state.storage.value)).state;
+  state = setV3UserDecision(state, "aiProviders", await prompter.multiSelect<AiProvider>("aiProviders", "AI providers", choices(["openai", "anthropic", "google", "azure-openai", "bedrock", "vertex", "vercel-ai-gateway"], { openai: "OpenAI", anthropic: "Anthropic", google: "Google", "azure-openai": "Azure OpenAI", bedrock: "Amazon Bedrock", vertex: "Google Vertex", "vercel-ai-gateway": "Vercel AI Gateway" }), state.aiProviders.value)).state;
 
-  state = setUserDecision(state, "ciEnabled", await prompter.confirm("ciEnabled", "Include continuous integration?", state.ciEnabled.value)).state;
-  state = setUserDecision(state, "vitest", await prompter.confirm("vitest", "Include Vitest?", state.vitest.value)).state;
-  state = setUserDecision(state, "playwright", await prompter.confirm("playwright", "Include Playwright?", state.playwright.value)).state;
-  state = setUserDecision(state, "opentelemetry", await prompter.confirm("opentelemetry", "Include OpenTelemetry?", state.opentelemetry.value)).state;
-  state = setUserDecision(state, "sentry", await prompter.confirm("sentry", "Include Sentry?", state.sentry.value)).state;
-  state = setUserDecision(state, "firstTask", await validText(prompter, "firstTask", "First task for your coding agent (optional)", state.firstTask.value, isValidFirstTask, "Use 500 characters or fewer without control characters.")).state;
+  state.stage = "quality";
+  state = setV3UserDecision(state, "ciEnabled", await prompter.confirm("ciEnabled", "Include continuous integration?", state.ciEnabled.value)).state;
+  state = setV3UserDecision(state, "vitest", await prompter.confirm("vitest", "Include Vitest?", state.vitest.value)).state;
+  state = setV3UserDecision(state, "playwright", await prompter.confirm("playwright", "Include Playwright?", state.playwright.value)).state;
+  state = setV3UserDecision(state, "opentelemetry", await prompter.confirm("opentelemetry", "Include OpenTelemetry?", state.opentelemetry.value)).state;
+  state = setV3UserDecision(state, "sentry", await prompter.confirm("sentry", "Include Sentry?", state.sentry.value)).state;
 
-  return recomputeRecommendations(state).state;
+  state.stage = "review";
+  return recomputeRecommendationsV3(state).state;
 }
 
 export class TerminalPrompter implements InteractivePrompter {

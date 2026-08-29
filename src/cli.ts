@@ -1,18 +1,34 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { platform } from "node:os";
-import { resolve } from "node:path";
-import { buildAgentKickoffPrompt, decodeBlueprint, isValidTargetDirectory, agentLabels, resolveStarterConfig, type AgentId, type StarterConfigV2 } from "./core.js";
-import { verifyDesignMarkdown } from "./design.js";
-import { collectInteractiveWizardState, TerminalPrompter, type InteractivePrompter } from "./interactive.js";
-import { renderAgents, renderBlueprint, renderSkillsLock, renderWorkspaceFiles, renderWorkflows, skillBundle } from "./render.js";
+import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import {
+  buildExecutionPlan,
+  decodeV3Blueprint,
+  isValidTargetDirectory,
+  resolveV3Config,
+  type ExecutionPlanV3,
+  type ExecutionPlanStep,
+  type StarterConfigV3,
+} from "./core.js";
+import {
+  renderAgentEntryPoints,
+  renderPlanMarkdown,
+  renderReadinessReport,
+  renderStartOwnedFiles,
+  createStartToolingManifest,
+  type StartToolingManifest,
+} from "./render.js";
+import { collectInteractiveWizardState, TerminalPrompter } from "./interactive.js";
 
-const args = process.argv.slice(2);
-const blueprintIndex = args.indexOf("--blueprint");
-const targetArg = args.find((argument, index) => !argument.startsWith("-") && index !== blueprintIndex + 1);
-const skipInstall = args.includes("--skip-install");
 const webBuilderUrl = "https://bishoy.io/start";
+
+type FileState = "absent" | "satisfied" | "different";
+type Outcome = { executed: string[]; skipped: string[]; conflicts: string[]; warnings: string[] };
+type StartState = { version: 3; blueprint: string; officialCommand: string };
 
 function fail(message: string): never {
   console.error(`\nStart generation stopped: ${message}`);
@@ -22,227 +38,364 @@ function fail(message: string): never {
 function printHelp() {
   console.log(`@bishoymly/start
 
-Usage:
-  pnpm dlx @bishoymly/start@latest
-  pnpm dlx @bishoymly/start@latest [target-folder]
-  pnpm dlx @bishoymly/start@latest --web
-  pnpm dlx @bishoymly/start@latest [target-folder] --blueprint v2.<token> [--skip-install]
+Turn an empty folder into a verified, agent-ready Next.js repository in one reviewable run.
 
-Without --blueprint, Start asks the same project, UI, service, and delivery questions as the web builder.
+Usage:
+  pnpm dlx @bishoymly/start@latest [target-folder] --blueprint v3.<token>
+  pnpm dlx @bishoymly/start@latest [target-folder] --blueprint v3.<token> --plan
+  pnpm dlx @bishoymly/start@latest --web
 
 Options:
-  --blueprint <token>  Generate from a portable web or CLI blueprint
-  --web               Open ${webBuilderUrl}
-  --skip-install      Write the workspace without installing dependencies
-  --help, -h          Show this help`);
+  --blueprint <token>  Execute a portable v3 blueprint
+  --plan               Print the ordered execution plan without writing files or running commands
+  --overwrite <step>   Approve replacing one conflicting Start-owned plan step (repeatable)
+  --skip-install       Skip project skill installation, dependency installation, and verification
+  --web                Open ${webBuilderUrl}
+  --help, -h           Show this help`);
 }
 
-function openWebBuilder(): boolean {
+function openWebBuilder(): void {
   const command: [string, string[]] = platform() === "darwin"
     ? ["open", [webBuilderUrl]]
     : platform() === "win32"
       ? ["cmd", ["/c", "start", "", webBuilderUrl]]
       : ["xdg-open", [webBuilderUrl]];
   const result = spawnSync(command[0], command[1], { stdio: "ignore" });
-  if (result.status === 0) {
-    console.log(`Opened ${webBuilderUrl}`);
+  console.log(result.status === 0 ? `Opened ${webBuilderUrl}` : `Open the web builder: ${webBuilderUrl}`);
+}
+
+function parseArguments(args: string[]) {
+  const blueprintIndex = args.indexOf("--blueprint");
+  const overwriteIndexes = args.flatMap((argument, index) => argument === "--overwrite" ? [index] : []);
+  const optionValues = new Set([blueprintIndex + 1, ...overwriteIndexes.map((index) => index + 1)]);
+  const targets = args.filter((argument, index) => !argument.startsWith("-") && !optionValues.has(index));
+  if (targets.length > 1) fail("Only one target folder may be supplied.");
+  if (overwriteIndexes.some((index) => !args[index + 1] || args[index + 1].startsWith("-"))) fail("--overwrite requires a plan step ID, for example --overwrite start-quality.");
+  if (args.some((argument) => argument.startsWith("--") && !["--blueprint", "--plan", "--overwrite", "--skip-install", "--web", "--help"].includes(argument))) {
+    fail("Unknown option. Run with --help for supported options.");
+  }
+  return { blueprint: blueprintIndex >= 0 ? args[blueprintIndex + 1] : undefined, target: targets[0], planOnly: args.includes("--plan"), overwrite: new Set(overwriteIndexes.map((index) => args[index + 1])), skipInstall: args.includes("--skip-install") };
+}
+
+function checkTarget(root: string, targetDirectory: string): string {
+  if (!isValidTargetDirectory(targetDirectory)) fail("Target folder must be a safe relative path without spaces, backslashes, or parent-directory segments.");
+  let cursor = root;
+  for (const segment of targetDirectory === "." ? [] : targetDirectory.split("/")) {
+    cursor = resolve(cursor, segment);
+    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) fail("Target folder cannot pass through symbolic links.");
+  }
+  const target = resolve(root, targetDirectory);
+  if (target !== root && !target.startsWith(`${root}/`)) fail("Target folder must stay inside the current directory.");
+  return target;
+}
+
+function assertNoSymlink(target: string, relativePath = "."): string {
+  const absolute = resolve(target, relativePath);
+  if (absolute !== target && !absolute.startsWith(`${target}/`)) fail("A planned path escaped the target directory.");
+  let cursor = target;
+  if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) fail("Start will not write through a symbolic link.");
+  for (const segment of relativePath.split("/").filter(Boolean)) {
+    cursor = resolve(cursor, segment);
+    if (existsSync(cursor) && lstatSync(cursor).isSymbolicLink()) fail(`Start will not write through symbolic link: ${relativePath}`);
+  }
+  return absolute;
+}
+
+function filesState(target: string, files: Record<string, string>): FileState {
+  const entries = Object.entries(files);
+  const present = entries.filter(([path]) => existsSync(assertNoSymlink(target, path)));
+  if (present.length === 0) return "absent";
+  if (present.length === entries.length && present.every(([path, content]) => readFileSync(assertNoSymlink(target, path), "utf8") === content)) return "satisfied";
+  return "different";
+}
+
+function pathExistsState(target: string, paths: readonly string[]): FileState {
+  const count = paths.filter((path) => existsSync(assertNoSymlink(target, path))).length;
+  return count === 0 ? "absent" : count === paths.length ? "satisfied" : "different";
+}
+
+function writeFiles(target: string, files: Record<string, string>) {
+  for (const [path, content] of Object.entries(files)) {
+    const absolute = assertNoSymlink(target, path);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, content, "utf8");
+  }
+}
+
+async function conflictDecision(step: ExecutionPlanStep, overwrite: Set<string>, interactive: boolean): Promise<"overwrite" | "preserve"> {
+  if (overwrite.has(step.id)) return "overwrite";
+  if (!interactive) fail(`Conflicting configuration for ${step.title}. Re-run with --overwrite ${step.id} to authorize only this plan step.`);
+  const prompt = createInterface({ input: stdin, output: stdout });
+  try {
+    const answer = (await prompt.question(`\n${step.title} differs from the selected blueprint. Overwrite this command or capability? [y/N] `)).trim().toLowerCase();
+    return answer === "y" || answer === "yes" ? "overwrite" : "preserve";
+  } finally {
+    prompt.close();
+  }
+}
+
+function runCommand(command: string, cwd: string, label: string, allowFailure = false): boolean {
+  if (process.env.START_TEST_SKIP_EXECUTION === "1") {
+    console.log(`Test seam: skipped ${label}.`);
     return true;
   }
-  console.log(`Open the web builder: ${webBuilderUrl}`);
-  return false;
-}
-
-async function configureInteractively(prompter: InteractivePrompter & { close(): void }): Promise<StarterConfigV2 | null> {
-  try {
-    const mode = await prompter.select("configurationMode", "Where do you want to configure Start?", [
-      { value: "terminal", label: "In this terminal" },
-      { value: "web", label: "Open the web builder" },
-    ] as const, "terminal");
-    if (mode === "web") {
-      openWebBuilder();
-      return null;
-    }
-    console.log("\nAnswer the same sections as bishoy.io/start. Press Enter to accept a recommendation.\n");
-    const state = await collectInteractiveWizardState(prompter, targetArg);
-    const resolved = resolveStarterConfig(state);
-    console.log(`\nReady to create ${resolved.projectName} in ${resolved.targetDirectory}.`);
-    const confirmed = await prompter.confirm("generate", "Generate this workspace now?", true);
-    return confirmed ? resolved : null;
-  } finally {
-    prompter.close();
+  console.log(`\n${label}: ${command}`);
+  const result = spawnSync(command, { cwd, shell: true, stdio: "inherit" });
+  if (result.status !== 0) {
+    if (allowFailure) return false;
+    fail(`${label} failed. The workspace was preserved for inspection and retry.`);
   }
+  return true;
 }
 
-if (args.includes("--help") || args.includes("-h")) {
-  printHelp();
-  process.exit(0);
-}
-
-if (args.includes("--web")) {
-  openWebBuilder();
-  process.exit(0);
-}
-
-let config: StarterConfigV2;
-if (blueprintIndex >= 0) {
-  if (!args[blueprintIndex + 1]) fail("--blueprint requires a v2 token.");
+function resolvedVersions(target: string): Record<string, string> {
+  const versions: Record<string, string> = { node: process.version };
+  const packageFile = resolve(target, "package.json");
+  if (!existsSync(packageFile)) return versions;
   try {
-    config = decodeBlueprint(args[blueprintIndex + 1]);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : "Invalid blueprint.");
-  }
-} else {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) fail(`Interactive setup requires a terminal. Use --blueprint <token> or open ${webBuilderUrl}.`);
-  let interactiveConfig: StarterConfigV2 | null = null;
-  try {
-    interactiveConfig = await configureInteractively(new TerminalPrompter());
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ABORT_ERR") process.exit(130);
-    fail(error instanceof Error ? error.message : "Interactive setup failed.");
-  }
-  if (!interactiveConfig) process.exit(0);
-  config = interactiveConfig;
-}
-
-const targetDirectory = targetArg ?? config.targetDirectory;
-if (!isValidTargetDirectory(targetDirectory)) fail("Target folder must be a safe relative path without spaces, backslashes, or parent-directory segments.");
-config = { ...config, targetDirectory };
-
-const generationRoot = realpathSync(process.cwd());
-let targetCursor = generationRoot;
-for (const segment of targetDirectory === "." ? [] : targetDirectory.split("/")) {
-  targetCursor = resolve(targetCursor, segment);
-  if (existsSync(targetCursor) && lstatSync(targetCursor).isSymbolicLink()) fail("Target folder cannot pass through symbolic links.");
-}
-const target = resolve(generationRoot, targetDirectory);
-if (existsSync(target) && readdirSync(target).length > 0) fail(`Refusing to overwrite non-empty folder: ${target}`);
-mkdirSync(target, { recursive: true });
-
-const write = (path: string, content: string) => {
-  const absolute = resolve(target, path);
-  mkdirSync(resolve(absolute, ".."), { recursive: true });
-  writeFileSync(absolute, content, "utf8");
-};
-
-write("APP_BLUEPRINT.md", renderBlueprint(config));
-write("AGENTS.md", renderAgents(config));
-write("skills-lock.json", renderSkillsLock());
-
-async function fetchDesign(): Promise<string> {
-  if (!config.designSource) throw new Error("Cannot fetch a design without pinned provenance.");
-  const designSource = config.designSource;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const url = `https://raw.githubusercontent.com/${designSource.repository}/${designSource.commit}/${designSource.path}`;
-    const response = await fetch(url, { signal: controller.signal, redirect: "error", headers: { Accept: "text/plain" } });
-    if (!response.ok) throw new Error(`upstream returned ${response.status}`);
-    const length = Number(response.headers.get("content-length") ?? "0");
-    if (length > 256_000) throw new Error("upstream file exceeds 256 KB");
-    const markdown = await response.text();
-    try {
-      return verifyDesignMarkdown(markdown, designSource);
-    } catch {
-      throw new Error("upstream hash verification failed");
-    }
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown upstream failure";
-    write("DESIGN_FETCH_ERROR.md", `# Recoverable design fetch error\n\nThe project folder was preserved. Retry the same command when the pinned source is available.\n\nReason: ${reason}\n\nCommit: ${designSource.commit}\n\nSHA-256: ${designSource.sha256}\n`);
-    fail(`${reason}. The generated folder was preserved with recovery details.`);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function agentConfig(agent: AgentId): { path: string; content: string } {
-  const designDocument = config.designReference ? ", /DESIGN.md" : "";
-  const body = `Read /APP_BLUEPRINT.md${designDocument}, and /AGENTS.md before editing. Use the portable workflows in /.agents/commands/. Run ${config.packageManager} run verify before shipping.`;
-  const instructionFiles = config.designReference ? ["APP_BLUEPRINT.md", "DESIGN.md", "AGENTS.md"] : ["APP_BLUEPRINT.md", "AGENTS.md"];
-  const files: Record<AgentId, { path: string; content: string }> = {
-    codex: { path: ".codex/instructions.md", content: body },
-    "claude-code": { path: "CLAUDE.md", content: body },
-    cursor: { path: ".cursor/rules/start.mdc", content: `---\ndescription: Start blueprint contract\nalwaysApply: true\n---\n${body}` },
-    "github-copilot": { path: ".github/copilot-instructions.md", content: body },
-    "gemini-cli": { path: "GEMINI.md", content: body },
-    opencode: { path: "opencode.json", content: JSON.stringify({ instructions: instructionFiles }, null, 2) },
-    windsurf: { path: ".windsurf/rules/start.md", content: body },
-    "grok-build": { path: ".grok/instructions.md", content: body },
-  };
-  return files[agent];
-}
-
-function skillInstructions(name: string, purpose: string, source: string): string {
-  const designInstruction = config.designReference ? " and DESIGN.md" : "";
-  const designRule = config.designReference ? " Preserve the selected design reference." : "";
-  return `---\nname: ${name}\ndescription: ${purpose}\nsource: https://github.com/${source}\n---\n\n# ${name}\n\nUse this project-local capability when its description matches the task. Read APP_BLUEPRINT.md${designInstruction} first.${designRule} Preserve the selected provider choices. Verify claims with the current codebase and report concrete evidence.\n`;
-}
-
-if (config.designReference) write("DESIGN.md", await fetchDesign());
-Object.entries(renderWorkspaceFiles(config)).forEach(([path, content]) => write(path, content));
-Object.entries(renderWorkflows(config)).forEach(([name, content]) => write(`.agents/commands/${name}.md`, content + "\n"));
-skillBundle.forEach((skill) => write(`.agents/skills/${skill.skill}/SKILL.md`, skillInstructions(skill.skill, skill.purpose, skill.source)));
-[config.primaryAgent, ...config.additionalAgents].forEach((agent) => {
-  const file = agentConfig(agent);
-  write(file.path, file.content + "\n");
-});
-
-if (!skipInstall) {
-  const commands: Record<StarterConfigV2["packageManager"], [string, string[]]> = {
-    npm: ["npm", ["install"]],
-    pnpm: ["pnpm", ["install"]],
-    yarn: ["yarn", ["install"]],
-    bun: ["bun", ["install"]],
-  };
-  const [executable, commandArgs] = commands[config.packageManager];
-  console.log(`\nInstalling dependencies with ${config.packageManager}...`);
-  const result = spawnSync(executable, commandArgs, { cwd: target, stdio: "inherit" });
-  if (result.status !== 0) fail(`Dependency installation failed. The folder is intact; run ${executable} ${commandArgs.join(" ")} in ${target} to retry.`);
-
-  const formatterCommands: Record<StarterConfigV2["packageManager"], [string, string[]]> = config.tooling === "biome"
-    ? {
-        npm: ["npx", ["biome", "format", "--write", "."]],
-        pnpm: ["pnpm", ["exec", "biome", "format", "--write", "."]],
-        yarn: ["yarn", ["exec", "biome", "format", "--write", "."]],
-        bun: ["bunx", ["biome", "format", "--write", "."]],
+    const pkg = JSON.parse(readFileSync(packageFile, "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    for (const name of ["next", "shadcn", "typescript", "vitest", "@playwright/test"]) {
+      const installed = resolve(target, "node_modules", ...name.split("/"), "package.json");
+      if (existsSync(installed)) {
+        try {
+          const packageVersion = (JSON.parse(readFileSync(installed, "utf8")) as { version?: unknown }).version;
+          if (typeof packageVersion === "string") versions[name] = packageVersion;
+        } catch { /* retained as a warning in the readiness report below */ }
       }
-    : {
-        npm: ["npx", ["prettier", "--write", "."]],
-        pnpm: ["pnpm", ["exec", "prettier", "--write", "."]],
-        yarn: ["yarn", ["exec", "prettier", "--write", "."]],
-        bun: ["bunx", ["prettier", "--write", "."]],
-      };
-  const [formatter, formatterArgs] = formatterCommands[config.packageManager];
-  console.log(`\nFormatting the generated workspace with ${config.tooling === "biome" ? "Biome" : "Prettier"}...`);
-  const formatted = spawnSync(formatter, formatterArgs, { cwd: target, stdio: "inherit" });
-  if (formatted.status !== 0) fail(`Formatting failed. The folder is intact; run ${formatter} ${formatterArgs.join(" ")} in ${target} to retry.`);
-
-  if (config.testing.includes("playwright")) {
-    const runArgs = ["run", "test:e2e:install"];
-    console.log("\nInstalling the Chromium browser selected for Playwright...");
-    const browserInstalled = spawnSync(config.packageManager, runArgs, { cwd: target, stdio: "inherit" });
-    if (browserInstalled.status !== 0) fail(`Playwright browser installation failed. The folder is intact; run ${config.packageManager} run test:e2e:install in ${target} to retry.`);
-  }
+      const declared = pkg.dependencies?.[name] ?? pkg.devDependencies?.[name];
+      if (!versions[name] && declared) versions[`${name} (declared; not installed)`] = declared;
+    }
+  } catch { /* the official CLI owns package.json; its verifier will report malformed JSON */ }
+  return versions;
 }
 
-function initializeGit() {
+function readStartState(target: string): StartState | null {
+  const stateFile = assertNoSymlink(target, ".start/v3-state.json");
+  if (!existsSync(stateFile)) return null;
+  try {
+    const value = JSON.parse(readFileSync(stateFile, "utf8")) as Partial<StartState>;
+    return value.version === 3 && typeof value.blueprint === "string" && typeof value.officialCommand === "string" ? value as StartState : null;
+  } catch { return null; }
+}
+
+function officialState(target: string, command: NonNullable<ExecutionPlanStep["command"]>, blueprint: string): FileState {
+  const state = readStartState(target);
+  const existing = pathExistsState(target, command.affectedPaths);
+  if (!state) return existing === "absent" ? "absent" : "different";
+  return state.blueprint === blueprint && state.officialCommand === command.command && existing === "satisfied" ? "satisfied" : "different";
+}
+
+function initializeGit(target: string): void {
   const existing = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: target, encoding: "utf8" });
-  if (existing.status === 0) {
-    console.log(`Using existing Git repository: ${existing.stdout.trim()}`);
-    return;
-  }
-  if (existing.error && (existing.error as NodeJS.ErrnoException).code === "ENOENT") {
-    console.warn(`Git is not installed. Initialize later with: cd ${targetDirectory} && git init --initial-branch=main`);
-    return;
-  }
+  if (existing.status === 0) return console.log(`Using existing Git repository: ${existing.stdout.trim()}`);
   const initialized = spawnSync("git", ["init", "--initial-branch=main"], { cwd: target, encoding: "utf8" });
   if (initialized.status === 0) console.log("Initialized Git repository on main.");
-  else console.warn(`Git initialization failed. Retry with: cd ${targetDirectory} && git init --initial-branch=main`);
+  else console.warn("Git initialization was skipped. Initialize it later with git init --initial-branch=main.");
 }
 
-initializeGit();
+async function applyFiles(target: string, step: ExecutionPlanStep, files: Record<string, string>, overwrite: Set<string>, interactive: boolean, outcome: Outcome): Promise<void> {
+  const state = filesState(target, files);
+  if (state === "satisfied") return void outcome.skipped.push(step.id);
+  if (state === "different") {
+    outcome.conflicts.push(step.id);
+    if (await conflictDecision(step, overwrite, interactive) === "preserve") return void outcome.skipped.push(step.id);
+  }
+  writeFiles(target, files);
+  outcome.executed.push(step.id);
+}
 
-console.log(`\nCreated ${config.projectName} in ${target}`);
-console.log(`Coding agents: ${[config.primaryAgent, ...config.additionalAgents].map((agent) => agentLabels[agent]).join(", ")}`);
-console.log(config.designReference && config.designSource ? `Design: ${config.designReference} from ${config.designSource.repository}` : "Design: none");
-console.log(`Next: ${targetDirectory === "." ? "" : `cd ${targetDirectory} && `}${config.packageManager} run dev`);
-console.log(`\nAgent kickoff:\n${buildAgentKickoffPrompt(config)}`);
+function scopedStartFiles(files: Record<string, string>, id: string, agentFiles: Record<string, string>): Record<string, string> {
+  const isCi = (path: string) => [".github/workflows/verify.yml", ".gitlab-ci.yml", "azure-pipelines.yml"].includes(path);
+  const isCapability = (path: string) => path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/") || path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts" || path.startsWith("lib/storage/") || path.startsWith("lib/ai/") || path === "instrumentation.ts" || path.startsWith("sentry.");
+  const belongsTo = (path: string) => {
+    if (id === "project-contracts") return !isCi(path) && !isCapability(path) && !(path in agentFiles) && path !== "START_READINESS.md" && !["tsconfig.json", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) && !path.startsWith("tests/");
+    if (id === "quality") return ["tsconfig.json", "biome.json", "eslint.config.mjs", "prettier.config.mjs", ".prettierignore", "vitest.config.ts", "playwright.config.ts"].includes(path) || path.startsWith("tests/");
+    if (id === "ci") return isCi(path);
+    if (id === "database") return path.startsWith("lib/db/") || path === "drizzle.config.ts" || path.startsWith("prisma/");
+    if (id === "authentication") return path === "lib/auth.ts" || path === "lib/auth-session.ts" || path === "app/api/auth/[...all]/route.ts";
+    if (id === "storage") return path.startsWith("lib/storage/");
+    if (id.startsWith("ai-")) return path.startsWith("lib/ai/");
+    if (id === "opentelemetry") return path === "instrumentation.ts";
+    if (id === "sentry") return path.startsWith("sentry.");
+    return false;
+  };
+  return Object.fromEntries(Object.entries(files).filter(([path]) => belongsTo(path)));
+}
+
+function toolingState(target: string, manifest: StartToolingManifest): FileState {
+  const packageFile = resolve(target, "package.json");
+  if (!existsSync(packageFile)) return "absent";
+  let pkg: Record<string, unknown>;
+  try { pkg = JSON.parse(readFileSync(packageFile, "utf8")) as Record<string, unknown>; } catch { return "different"; }
+  const entries = (["scripts", "dependencies", "devDependencies"] as const).flatMap((section) => Object.entries(manifest[section] ?? {}).map(([name, version]) => [section, name, version] as const));
+  const matched = entries.filter(([section, name, version]) => (pkg[section] as Record<string, string> | undefined)?.[name] === version).length;
+  if (matched === entries.length) return "satisfied";
+  if (matched === 0 && entries.every(([section, name]) => (pkg[section] as Record<string, string> | undefined)?.[name] === undefined)) return "absent";
+  return "different";
+}
+
+function applyToolingManifest(target: string, manifest: StartToolingManifest): void {
+  const packageFile = resolve(target, "package.json");
+  let pkg: Record<string, unknown> = {};
+  if (existsSync(packageFile)) pkg = JSON.parse(readFileSync(packageFile, "utf8")) as Record<string, unknown>;
+  for (const section of ["scripts", "dependencies", "devDependencies"] as const) {
+    const values = manifest[section];
+    if (!values || Object.keys(values).length === 0) continue;
+    pkg[section] = { ...(pkg[section] as Record<string, string> | undefined), ...values };
+  }
+  writeFiles(target, { "package.json": `${JSON.stringify(pkg, null, 2)}\n` });
+}
+
+async function applyQuality(target: string, step: ExecutionPlanStep, files: Record<string, string>, manifest: StartToolingManifest, overwrite: Set<string>, interactive: boolean, outcome: Outcome): Promise<void> {
+  const fileState = filesState(target, files);
+  const manifestState = toolingState(target, manifest);
+  if (fileState === "satisfied" && manifestState === "satisfied") return void outcome.skipped.push(step.id);
+  if (fileState === "different" || manifestState === "different") {
+    outcome.conflicts.push(step.id);
+    if (await conflictDecision(step, overwrite, interactive) === "preserve") return void outcome.skipped.push(step.id);
+  }
+  writeFiles(target, files);
+  applyToolingManifest(target, manifest);
+  outcome.executed.push(step.id);
+}
+
+function installSkills(plan: ExecutionPlanV3, target: string): void {
+  if (process.env.START_TEST_SKILL_OUTPUTS === "1") {
+    writeFiles(target, Object.fromEntries(plan.skills.flatMap((skill) => skill.expectedPaths.map((path) => [path, "# test-only installed skill\n"]))));
+  }
+  for (const skill of plan.skills) runCommand(skill.installCommand, target, `Installing ${skill.id}`);
+  if (pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths)) !== "satisfied") {
+    fail("The official Skills CLI completed without producing every expected project-local skill file.");
+  }
+}
+
+async function execute(config: StarterConfigV3, plan: ExecutionPlanV3, target: string, options: ReturnType<typeof parseArguments>): Promise<Outcome> {
+  const outcome: Outcome = { executed: [], skipped: [], conflicts: [], warnings: [...plan.warnings] };
+  const interactive = Boolean(stdin.isTTY && stdout.isTTY && !options.blueprint);
+  mkdirSync(target, { recursive: true });
+  const startFiles = renderStartOwnedFiles(config, plan);
+  const agentFiles = renderAgentEntryPoints(config);
+  const toolingManifest = createStartToolingManifest(config);
+
+  for (const step of plan.steps) {
+    if (step.id === "official-shadcn-init") {
+      const contract = step.command;
+      if (!contract) fail("The official shadcn plan step is missing its command.");
+      const state = officialState(target, contract, plan.blueprint);
+      if (state === "satisfied") outcome.skipped.push(step.id);
+      else if (state === "different") {
+        outcome.conflicts.push(step.id);
+        // Start never invokes undocumented force behavior against an unknown
+        // official-looking directory. A v3 marker is the sole resumability proof.
+        fail(`Existing official-like files have no matching Start v3 state marker. Preserve them or choose a new target; ${step.id} cannot be overwritten.`);
+      } else {
+        runCommand(contract.command, target, step.title);
+        outcome.executed.push(step.id);
+      }
+      continue;
+    }
+    if (step.id === "record-start-state") {
+      const official = plan.steps.find((candidate) => candidate.id === "official-shadcn-init")?.command;
+      if (!official) fail("The execution plan is missing its official template contract.");
+      await applyFiles(target, step, { ".start/v3-state.json": `${JSON.stringify({ version: 3, blueprint: plan.blueprint, officialCommand: official.command }, null, 2)}\n` }, options.overwrite, interactive, outcome);
+      continue;
+    }
+    if (step.id === "start-agent-instructions") {
+      await applyFiles(target, step, agentFiles, options.overwrite, interactive, outcome);
+      continue;
+    }
+    if (step.id === "start-project-contracts" || step.id === "start-quality" || step.id === "start-ci" || step.id.startsWith("capability-")) {
+      const id = step.id === "start-project-contracts" ? "project-contracts" : step.id === "start-quality" ? "quality" : step.id === "start-ci" ? "ci" : step.id.slice("capability-".length);
+      const scoped = scopedStartFiles(startFiles, id, agentFiles);
+      if (step.id === "start-quality") await applyQuality(target, step, scoped, toolingManifest, options.overwrite, interactive, outcome);
+      else if (Object.keys(scoped).length) await applyFiles(target, step, scoped, options.overwrite, interactive, outcome);
+      else outcome.skipped.push(step.id);
+      continue;
+    }
+    if (step.id === "install-project-skills") {
+      if (options.skipInstall) {
+        outcome.skipped.push(step.id);
+        continue;
+      }
+      const state = pathExistsState(target, plan.skills.flatMap((skill) => skill.expectedPaths));
+      if (state === "satisfied") outcome.skipped.push(step.id);
+      else if (state === "different") {
+        outcome.conflicts.push(step.id);
+        if (await conflictDecision(step, options.overwrite, interactive) === "preserve") outcome.skipped.push(step.id);
+        else { installSkills(plan, target); outcome.executed.push(step.id); }
+      } else { installSkills(plan, target); outcome.executed.push(step.id); }
+      continue;
+    }
+    if (step.id === "install-dependencies" || step.id === "install-browser") {
+      if (options.skipInstall) outcome.skipped.push(step.id);
+      else if (!step.command) fail(`The execution plan is missing ${step.id}'s command.`);
+      else { runCommand(step.command.command, target, step.title); outcome.executed.push(step.id); }
+      continue;
+    }
+    if (step.id === "verify-readiness") continue;
+    if (step.id === "record-readiness") continue;
+    if (step.id === "initialize-git") continue;
+  }
+
+  const verification = plan.steps.find((step) => step.id === "verify-readiness");
+  if (!verification) fail("The execution plan is missing readiness verification.");
+  let verificationStatus: "pending" | "passed" | "failed" = "pending";
+  let verificationFailed = false;
+  if (!options.skipInstall && process.env.START_TEST_SKIP_EXECUTION !== "1") {
+    verificationFailed = !runCommand(plan.verification.command, target, verification.title, true);
+    verificationStatus = verificationFailed ? "failed" : "passed";
+    outcome[verificationFailed ? "skipped" : "executed"].push(verification.id);
+  } else outcome.skipped.push(verification.id);
+
+  if (options.skipInstall) outcome.warnings.push("Dependencies and verification were skipped; this workspace is not ready until a full run succeeds.");
+  const readinessStep = plan.steps.find((step) => step.id === "record-readiness");
+  if (!readinessStep) fail("The execution plan is missing the readiness report step.");
+  // The matching state marker proves this is Start's mutable execution record;
+  // it is deliberately refreshed on each resumable run rather than treated as
+  // user configuration.
+  writeFiles(target, { "START_READINESS.md": renderReadinessReport({ plan, executed: outcome.executed, skipped: outcome.skipped, conflicts: outcome.conflicts, resolvedVersions: resolvedVersions(target), verification: { command: plan.verification.command, status: verificationStatus, details: options.skipInstall ? "Not ready: --skip-install bypassed dependency installation and verification." : undefined }, warnings: outcome.warnings }) });
+  outcome.executed.push(readinessStep.id);
+  if (verificationFailed) fail(`${verification.title} failed. START_READINESS.md records the failed verification; the workspace was preserved for inspection and retry.`);
+  const gitStep = plan.steps.find((step) => step.id === "initialize-git");
+  if (!gitStep) fail("The execution plan is missing Git initialization.");
+  initializeGit(target);
+  outcome.executed.push(gitStep.id);
+  return outcome;
+}
+
+async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) return printHelp();
+  if (args.includes("--web")) return openWebBuilder();
+  const options = parseArguments(args);
+  let config: StarterConfigV3;
+  let planAlreadyPrinted = false;
+  if (options.blueprint) {
+    try { config = decodeV3Blueprint(options.blueprint); } catch (error) { fail(error instanceof Error ? error.message : "Invalid v3 blueprint."); }
+  } else {
+    if (!stdin.isTTY || !stdout.isTTY) fail(`Interactive setup requires a terminal. Use --blueprint v3.<token> or open ${webBuilderUrl}.`);
+    const prompter = new TerminalPrompter();
+    try {
+      config = resolveV3Config(await collectInteractiveWizardState(prompter, options.target));
+      const review = buildExecutionPlan(config);
+      console.log(`\n${renderPlanMarkdown(review)}`);
+      planAlreadyPrinted = true;
+      if (options.planOnly || !(await prompter.confirm("executePlan", "Execute this plan now?", true))) return;
+    } finally {
+      prompter.close();
+    }
+  }
+  const targetDirectory = options.target ?? config.targetDirectory;
+  const target = checkTarget(realpathSync(process.cwd()), targetDirectory);
+  config = { ...config, targetDirectory };
+  const plan = buildExecutionPlan(config);
+  if (!planAlreadyPrinted) console.log(renderPlanMarkdown(plan));
+  if (options.planOnly) return;
+  const outcome = await execute(config, plan, target, options);
+  console.log(`\nReadiness report written to ${resolve(target, "START_READINESS.md")}.`);
+  console.log(`Executed: ${outcome.executed.join(", ") || "none"}`);
+  console.log(`Skipped: ${outcome.skipped.join(", ") || "none"}`);
+  console.log("Repository setup is complete. Await a PRD or requirements before implementing product behavior.");
+}
+
+void main().catch((error) => fail(error instanceof Error ? error.message : "Unexpected CLI failure."));

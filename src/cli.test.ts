@@ -4,104 +4,124 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { createDefaultWizardState, encodeBlueprint, recomputeRecommendations, resolveStarterConfig, setUserDecision } from "./core.js";
-import { getBundledDesignReference } from "./design.js";
-
-function tokenFor(targetDirectory = "generated-app") {
-  let state = createDefaultWizardState();
-  const design = getBundledDesignReference("notion");
-  state.designReference = { value: "notion", source: "user" };
-  state.designProvenance = design.source;
-  state = setUserDecision(state, "targetDirectory", targetDirectory).state;
-  return encodeBlueprint(resolveStarterConfig(recomputeRecommendations(state).state));
-}
-
-function tokenWithoutDesign(targetDirectory = "generated-app") {
-  let state = createDefaultWizardState();
-  state = setUserDecision(state, "targetDirectory", targetDirectory).state;
-  return encodeBlueprint(resolveStarterConfig(state));
-}
+import { createDefaultState, encodeV3Blueprint, resolveV3Config, setV3UserDecision } from "./core.js";
 
 const cli = new URL("./cli.js", import.meta.url);
 
-test("CLI help documents interactive, web, and blueprint modes", () => {
-  const result = spawnSync(process.execPath, [cli.pathname, "--help"], { encoding: "utf8" });
+function tokenFor(targetDirectory = "generated-app") {
+  let state = createDefaultState();
+  state = setV3UserDecision(state, "targetDirectory", targetDirectory).state;
+  return encodeV3Blueprint(resolveV3Config(state));
+}
+
+function run(root: string, args: string[], options: { skipExecution?: boolean } = {}) {
+  return spawnSync(process.execPath, [cli.pathname, ...args], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, ...(options.skipExecution ? { START_TEST_SKIP_EXECUTION: "1" } : {}) },
+  });
+}
+
+test("CLI help documents v3, plan-only, overwrite, and web modes", () => {
+  const result = run(process.cwd(), ["--help"]);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /same project, UI, service, and delivery questions/i);
+  assert.match(result.stdout, /v3\.<token>/);
+  assert.match(result.stdout, /--plan/);
+  assert.match(result.stdout, /--overwrite/);
   assert.match(result.stdout, /--web/);
-  assert.match(result.stdout, /--blueprint/);
 });
 
-test("CLI gives non-interactive shells a recoverable path", () => {
-  const result = spawnSync(process.execPath, [cli.pathname], { encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Interactive setup requires a terminal/);
-  assert.match(result.stderr, /bishoy\.io\/start/);
+test("CLI plan-only prints the v3 ordered plan without creating a target", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-plan-"));
+  const result = run(root, ["apps/web", "--blueprint", tokenFor(), "--plan"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Initialize the official shadcn template/);
+  assert.match(result.stdout, /--template next/);
+  assert.match(result.stdout, /Install selected project skills/);
+  assert.match(result.stdout, /Verify repository readiness/);
+  assert.equal(existsSync(join(root, "apps")), false);
 });
 
-test("CLI refuses to overwrite a non-empty folder", () => {
-  const root = mkdtempSync(join(tmpdir(), "bishoy-starter-overwrite-"));
-  const target = join(root, "existing-app");
-  mkdirSync(target);
-  writeFileSync(join(target, "keep.txt"), "keep", "utf8");
-  const result = spawnSync(process.execPath, [cli.pathname, "existing-app", "--blueprint", tokenFor(), "--skip-install"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /Refusing to overwrite non-empty folder/);
+test("CLI rejects legacy tokens and a missing v3 token before writing", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-v3-token-"));
+  const legacy = run(root, ["--blueprint", "v2.legacy", "--plan"]);
+  assert.equal(legacy.status, 1);
+  assert.match(legacy.stderr, /Blueprint v3 is required/);
+  const missing = run(root, ["--blueprint", "--plan"]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /Unsupported blueprint token|requires a v3 token/);
+  assert.equal(existsSync(join(root, "my-app")), false);
 });
 
-test("CLI rejects an unsafe target override before writing", () => {
-  const root = mkdtempSync(join(tmpdir(), "bishoy-start-target-"));
-  const result = spawnSync(process.execPath, [cli.pathname, "../outside", "--blueprint", tokenFor(), "--skip-install"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /safe relative path/);
-  assert.equal(existsSync(join(root, "..", "outside", "package.json")), false);
-});
-
-test("CLI rejects target paths that escape through symbolic links", (context) => {
-  const root = mkdtempSync(join(tmpdir(), "bishoy-start-symlink-root-"));
-  const outside = mkdtempSync(join(tmpdir(), "bishoy-start-symlink-outside-"));
-  try {
-    symlinkSync(outside, join(root, "linked"), "dir");
-  } catch {
-    context.skip("Directory symlinks are unavailable in this environment.");
-    return;
-  }
-  const result = spawnSync(process.execPath, [cli.pathname, "linked/app", "--blueprint", tokenFor(), "--skip-install"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /symbolic links/);
+test("CLI rejects unsafe and symlink targets without writing", (context) => {
+  const root = mkdtempSync(join(tmpdir(), "start-safe-target-"));
+  const unsafe = run(root, ["../outside", "--blueprint", tokenFor(), "--plan"]);
+  assert.equal(unsafe.status, 1);
+  assert.match(unsafe.stderr, /safe relative path/);
+  const outside = mkdtempSync(join(tmpdir(), "start-safe-outside-"));
+  try { symlinkSync(outside, join(root, "linked"), "dir"); } catch { context.skip("Directory symlinks are unavailable in this environment."); return; }
+  const linked = run(root, ["linked/app", "--blueprint", tokenFor(), "--plan"]);
+  assert.equal(linked.status, 1);
+  assert.match(linked.stderr, /symbolic links/);
   assert.equal(existsSync(join(outside, "app")), false);
 });
 
-test("CLI uses the blueprint folder, writes the v0.4 contract, and initializes Git", () => {
-  const root = mkdtempSync(join(tmpdir(), "bishoy-start-generate-"));
-  const result = spawnSync(process.execPath, [cli.pathname, "--blueprint", tokenFor("apps/web"), "--skip-install"], { cwd: root, encoding: "utf8" });
+test("CLI executes the v3 plan through the no-network test seam and reports readiness", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-v3-execute-"));
+  const result = run(root, ["app", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
   assert.equal(result.status, 0, result.stderr);
-  const target = join(root, "apps", "web");
-  assert.equal(existsSync(join(target, "package.json")), true);
-  assert.equal(existsSync(join(target, "README.md")), true);
-  assert.equal(existsSync(join(target, "biome.json")), true);
-  assert.equal(existsSync(join(target, "vitest.config.ts")), true);
-  assert.equal(existsSync(join(target, "playwright.config.ts")), true);
-  assert.equal(existsSync(join(target, "instrumentation.ts")), true);
-  assert.equal(existsSync(join(target, ".git")), true);
-  assert.match(readFileSync(join(target, "APP_BLUEPRINT.md"), "utf8"), /v0\.4\.0/);
+  assert.equal(existsSync(join(root, "app", "AGENTS.md")), true);
+  assert.equal(existsSync(join(root, "app", "START_READINESS.md")), true);
+  assert.match(readFileSync(join(root, "app", "START_READINESS.md"), "utf8"), /Await a PRD|requirements/i);
+  assert.match(result.stdout, /Test seam: skipped Initialize the official shadcn template/);
+  assert.match(result.stdout, /Skipped:.*install-project-skills/);
 });
 
-test("CLI generates without fetching or writing a design reference", () => {
-  const root = mkdtempSync(join(tmpdir(), "bishoy-start-no-design-"));
-  const result = spawnSync(process.execPath, [cli.pathname, "app", "--blueprint", tokenWithoutDesign(), "--skip-install"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(existsSync(join(root, "app", "DESIGN.md")), false);
-  assert.equal(readFileSync(join(root, "app", "README.md"), "utf8").includes("DESIGN.md"), false);
-  assert.match(result.stdout, /Design: none/);
+test("CLI fails safely on a Start-owned conflict unless overwrite is explicit", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-conflict-"));
+  const args = ["app", "--blueprint", tokenFor(), "--skip-install"];
+  const initial = run(root, args, { skipExecution: true });
+  assert.equal(initial.status, 0, initial.stderr);
+  // The no-network seam deliberately does not synthesize official shadcn output.
+  // Supply the upstream command's postcondition so this rerun reaches the Start-owned conflict.
+  mkdirSync(join(root, "app", "app"));
+  mkdirSync(join(root, "app", "components"));
+  writeFileSync(join(root, "app", "components.json"), "{}\n", "utf8");
+  const agents = join(root, "app", "AGENTS.md");
+  writeFileSync(agents, "user-owned conflict\n", "utf8");
+  const conflict = run(root, args, { skipExecution: true });
+  assert.equal(conflict.status, 1);
+  assert.match(conflict.stderr, /Conflicting configuration for Add durable agent instructions/);
+  assert.equal(readFileSync(agents, "utf8"), "user-owned conflict\n");
+  const overwrite = run(root, [...args, "--overwrite", "start-agent-instructions"], { skipExecution: true });
+  assert.equal(overwrite.status, 0, overwrite.stderr);
+  assert.notEqual(readFileSync(agents, "utf8"), "user-owned conflict\n");
 });
 
-test("CLI reuses an outer Git repository instead of nesting one", () => {
-  const root = mkdtempSync(join(tmpdir(), "bishoy-start-outer-git-"));
-  const git = spawnSync("git", ["init", "--initial-branch=main"], { cwd: root, encoding: "utf8" });
-  if (git.status !== 0) return;
-  const result = spawnSync(process.execPath, [cli.pathname, "app", "--blueprint", tokenFor(), "--skip-install"], { cwd: root, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(existsSync(join(root, "app", ".git")), false);
-  assert.match(result.stdout, /Using existing Git repository/);
+test("CLI rejects an unknown official-like target and every planned symlink write", (context) => {
+  const root = mkdtempSync(join(tmpdir(), "start-symlink-output-"));
+  const app = join(root, "app");
+  mkdirSync(app);
+  mkdirSync(join(app, "components"));
+  writeFileSync(join(app, "components.json"), "{}\n");
+  const unknown = run(root, ["app", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /state marker/);
+
+  const target = join(root, "safe");
+  mkdirSync(target);
+  const outside = join(root, "outside-agents.md");
+  writeFileSync(outside, "outside\n");
+  try { symlinkSync(outside, join(target, "AGENTS.md")); } catch { context.skip("File symlinks are unavailable in this environment."); return; }
+  const linked = run(root, ["safe", "--blueprint", tokenFor(), "--skip-install"], { skipExecution: true });
+  assert.equal(linked.status, 1);
+  assert.match(linked.stderr, /symbolic link/);
+  assert.equal(readFileSync(outside, "utf8"), "outside\n");
+});
+
+test("a missing installer-produced skill file fails even through the no-network command seam", () => {
+  const root = mkdtempSync(join(tmpdir(), "start-skills-missing-"));
+  const result = run(root, ["app", "--blueprint", tokenFor()], { skipExecution: true });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /without producing every expected project-local skill file/);
 });
